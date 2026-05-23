@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ssh": {
+      "command": "node",
+      "args": ["D:/project/mcp/build/index.js"]
+    }
+  }
+}
