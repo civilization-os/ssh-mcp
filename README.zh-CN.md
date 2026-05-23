@@ -1,5 +1,11 @@
 # ssh-mcp
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-007ACC.svg)](https://www.typescriptlang.org/)
+[![Node](https://img.shields.io/badge/Node-%3E%3D18-339933.svg)](https://nodejs.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/civilization-os/ssh-mcp/pulls)
+[![MCP Server](https://img.shields.io/badge/MCP-Server-7C3AED.svg)](https://modelcontextprotocol.io)
+
 > 基于 MCP 协议的 AI 远程服务器管理工具。持久化 SSH 会话、全功能 SFTP、系统监控、日志查看 — 让 AI 像使用 Xshell + Xsftp 一样管理服务器。
 
 🌐 **English version:** [README.md](README.md)
