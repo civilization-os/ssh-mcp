@@ -171,6 +171,43 @@ export type SshLogSearchArgs = {
   timeout?: number;
 } & Partial<SshCredentials>;
 
+/** Shared MCP tool result type */
+export type ToolResult = {
+  content: { type: string; text: string }[];
+  isError?: boolean;
+};
+
+// --- Interactive Shell types ---
+
+export interface SshShellArgs {
+  sessionId: string;
+  cols?: number;
+  rows?: number;
+  term?: string;
+}
+
+export interface SshShellWriteArgs {
+  shellId: string;
+  input: string;
+}
+
+export interface SshShellReadArgs {
+  shellId: string;
+  maxLength?: number;
+  clear?: boolean;
+  waitMs?: number;
+}
+
+export interface SshShellResizeArgs {
+  shellId: string;
+  cols?: number;
+  rows?: number;
+}
+
+export interface SshShellCloseArgs {
+  shellId: string;
+}
+
 // --- Validation helpers ---
 
 function isRecord(args: unknown): args is Record<string, unknown> {
@@ -283,4 +320,24 @@ export function validateSshLogTailArgs(args: unknown): args is SshLogTailArgs {
 
 export function validateSshLogSearchArgs(args: unknown): args is SshLogSearchArgs {
   return isRecord(args) && typeof args.path === "string" && typeof args.pattern === "string";
+}
+
+export function validateSshShellArgs(args: unknown): args is SshShellArgs {
+  return isRecord(args) && typeof args.sessionId === "string";
+}
+
+export function validateSshShellWriteArgs(args: unknown): args is SshShellWriteArgs {
+  return isRecord(args) && typeof args.shellId === "string" && typeof args.input === "string";
+}
+
+export function validateSshShellReadArgs(args: unknown): args is SshShellReadArgs {
+  return isRecord(args) && typeof args.shellId === "string";
+}
+
+export function validateSshShellResizeArgs(args: unknown): args is SshShellResizeArgs {
+  return isRecord(args) && typeof args.shellId === "string";
+}
+
+export function validateSshShellCloseArgs(args: unknown): args is SshShellCloseArgs {
+  return isRecord(args) && typeof args.shellId === "string";
 }

@@ -39,6 +39,15 @@ import {
   handleLogSearch,
 } from "./handlers/system.js";
 import {
+  handleShellCreate,
+  handleShellWrite,
+  handleShellRead,
+  handleShellResize,
+  handleShellClose,
+  handleShellList,
+  cleanShellsBySession,
+} from "./handlers/shell.js";
+import {
   validateSshConnectArgs,
   validateSshDisconnectArgs,
   validateSshExecArgs,
@@ -59,6 +68,11 @@ import {
   validateSshExecBgArgs,
   validateSshExecStopArgs,
   validateSshExecBgResultArgs,
+  validateSshShellArgs,
+  validateSshShellWriteArgs,
+  validateSshShellReadArgs,
+  validateSshShellResizeArgs,
+  validateSshShellCloseArgs,
   extractCredentials,
   extractSessionId,
 } from "./types.js";
@@ -347,6 +361,77 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
 
+    // ======== Interactive Shell (PTY) ========
+    {
+      name: "ssh_shell",
+      description: "Create an interactive PTY shell session on a remote server. Returns a shellId for read/write/resize/close operations. Like Xshell — you write commands, read output.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session ID from ssh_connect" },
+          cols: { type: "number", description: "Terminal columns (default: 120)" },
+          rows: { type: "number", description: "Terminal rows (default: 30)" },
+          term: { type: "string", description: "Terminal type (default: xterm)" },
+        },
+        required: ["sessionId"],
+      },
+    },
+    {
+      name: "ssh_shell_write",
+      description: "Write input to an interactive shell. Supports text, commands, and control sequences. Use \\n for newline/enter.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          shellId: { type: "string", description: "Shell ID from ssh_shell" },
+          input: { type: "string", description: "Text to write to the shell stdin (use \\n for Enter)" },
+        },
+        required: ["shellId", "input"],
+      },
+    },
+    {
+      name: "ssh_shell_read",
+      description: "Read buffered output from an interactive shell. Optionally waits for output to settle (waitMs) before returning, like waiting for a command to finish.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          shellId: { type: "string", description: "Shell ID from ssh_shell" },
+          maxLength: { type: "number", description: "Max bytes to return (default: 50000, reads from end)" },
+          clear: { type: "boolean", description: "Clear buffer after reading (default: true)" },
+          waitMs: { type: "number", description: "Wait for N ms of silence before returning (e.g. 500 = wait until output stops)" },
+        },
+        required: ["shellId"],
+      },
+    },
+    {
+      name: "ssh_shell_resize",
+      description: "Resize the interactive terminal (change PTY cols/rows).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          shellId: { type: "string", description: "Shell ID from ssh_shell" },
+          cols: { type: "number", description: "Terminal columns (default: 120)" },
+          rows: { type: "number", description: "Terminal rows (default: 30)" },
+        },
+        required: ["shellId"],
+      },
+    },
+    {
+      name: "ssh_shell_close",
+      description: "Close an interactive shell session. Flushes remaining buffer then terminates.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          shellId: { type: "string", description: "Shell ID from ssh_shell" },
+        },
+        required: ["shellId"],
+      },
+    },
+    {
+      name: "ssh_shell_list",
+      description: "List all active interactive shell sessions.",
+      inputSchema: { type: "object", properties: {} },
+    },
+
     // ======== Log Viewing ========
     {
       name: "ssh_log_tail",
@@ -410,6 +495,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!validateSshDisconnectArgs(args)) {
           throw new McpError(ErrorCode.InvalidParams, "sessionId is required");
         }
+        cleanShellsBySession(args.sessionId);
         const ok = disconnectSession(args.sessionId);
         return {
           content: [{
@@ -559,6 +645,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new McpError(ErrorCode.InvalidParams, "path and pattern are required");
         }
         return await handleLogSearch(args);
+      }
+
+      // Interactive Shell
+      case "ssh_shell": {
+        if (!validateSshShellArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "sessionId is required");
+        }
+        return await handleShellCreate(args);
+      }
+
+      case "ssh_shell_write": {
+        if (!validateSshShellWriteArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "shellId and input are required");
+        }
+        return await handleShellWrite(args);
+      }
+
+      case "ssh_shell_read": {
+        if (!validateSshShellReadArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "shellId is required");
+        }
+        return await handleShellRead(args);
+      }
+
+      case "ssh_shell_resize": {
+        if (!validateSshShellResizeArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "shellId is required");
+        }
+        return await handleShellResize(args);
+      }
+
+      case "ssh_shell_close": {
+        if (!validateSshShellCloseArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "shellId is required");
+        }
+        return await handleShellClose(args);
+      }
+
+      case "ssh_shell_list": {
+        return await handleShellList();
       }
 
       default:
