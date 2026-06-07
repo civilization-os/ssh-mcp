@@ -56,7 +56,22 @@ export const translations = {
     // Confirm delete
     confirmDeleteTitle: "确认断开并删除会话？",
     confirmDeleteHint: "此操作将断开 SSH 连接并从持久化存储中移除，无法撤销。",
-    confirmDeleteBtn: "确认删除"
+    confirmDeleteBtn: "确认删除",
+    // SFTP operations
+    sftpMkdir: "新建文件夹",
+    sftpMkdirPlaceholder: "输入文件夹名称...",
+    sftpMkdirOk: "文件夹已创建",
+    sftpUpload: "上传文件",
+    sftpUploadOk: "上传成功",
+    sftpDownload: "下载",
+    sftpDownloadOk: "下载成功",
+    sftpRename: "重命名",
+    sftpRenamedOk: "重命名成功",
+    sftpDelete: "删除",
+    sftpDeletedOk: "删除成功",
+    sftpActions: "操作",
+    sftpEmpty: "此目录为空",
+    sftpRefresh: "刷新",
   },
   en: {
     title: "SSH-MCP Console",
@@ -115,7 +130,22 @@ export const translations = {
     // Confirm delete
     confirmDeleteTitle: "Disconnect & Remove Session?",
     confirmDeleteHint: "This will terminate the SSH connection and remove it from persistent storage. This cannot be undone.",
-    confirmDeleteBtn: "Delete Session"
+    confirmDeleteBtn: "Delete Session",
+    // SFTP operations
+    sftpMkdir: "New Folder",
+    sftpMkdirPlaceholder: "Enter folder name...",
+    sftpMkdirOk: "Folder created",
+    sftpUpload: "Upload",
+    sftpUploadOk: "Upload successful",
+    sftpDownload: "Download",
+    sftpDownloadOk: "Downloaded",
+    sftpRename: "Rename",
+    sftpRenamedOk: "Renamed successfully",
+    sftpDelete: "Delete",
+    sftpDeletedOk: "Deleted",
+    sftpActions: "Actions",
+    sftpEmpty: "This directory is empty",
+    sftpRefresh: "Refresh",
   }
 };
 

@@ -152,8 +152,144 @@ export function startHttpServer(port: number = 12222) {
       return;
     }
 
+    // SFTP DELETE file/dir  DELETE /api/sessions/:id/sftp/delete?path=...
+    const sftpDeleteMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/sftp\/delete$/);
+    if (sftpDeleteMatch && req.method === "DELETE") {
+      const sessionId = sftpDeleteMatch[1];
+      const path = url.searchParams.get("path") || "";
+      try {
+        const { handleDelete } = await import("./handlers/sftp.js");
+        const result = await handleDelete({ sessionId, path }) as any;
+        res.writeHead(result.isError ? 400 : 200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ isError: true, error: err.message }));
+      }
+      return;
+    }
+
+    // SFTP RENAME  POST /api/sessions/:id/sftp/rename  {oldPath, newPath}
+    const sftpRenameMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/sftp\/rename$/);
+    if (sftpRenameMatch && req.method === "POST") {
+      const sessionId = sftpRenameMatch[1];
+      let body = "";
+      req.on("data", c => { body += c; });
+      req.on("end", async () => {
+        try {
+          const { oldPath, newPath } = JSON.parse(body);
+          const { handleRename } = await import("./handlers/sftp.js");
+          const result = await handleRename({ sessionId, source: oldPath, dest: newPath }) as any;
+          res.writeHead(result.isError ? 400 : 200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ isError: true, error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // SFTP MKDIR  POST /api/sessions/:id/sftp/mkdir  {path}
+    const sftpMkdirMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/sftp\/mkdir$/);
+    if (sftpMkdirMatch && req.method === "POST") {
+      const sessionId = sftpMkdirMatch[1];
+      let body = "";
+      req.on("data", c => { body += c; });
+      req.on("end", async () => {
+        try {
+          const { path: mkPath } = JSON.parse(body);
+          const { handleMkdir } = await import("./handlers/sftp.js");
+          const result = await handleMkdir({ sessionId, path: mkPath }) as any;
+          res.writeHead(result.isError ? 400 : 200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ isError: true, error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // SFTP DOWNLOAD  GET /api/sessions/:id/sftp/download?path=...
+    const sftpDownloadMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/sftp\/download$/);
+    if (sftpDownloadMatch && req.method === "GET") {
+      const sessionId = sftpDownloadMatch[1];
+      const filePath = url.searchParams.get("path") || "";
+      const fileName = filePath.split("/").pop() || "download";
+      try {
+        const { handleReadFile } = await import("./handlers/sftp.js");
+        const result = await handleReadFile({ sessionId, path: filePath }) as any;
+        if (result.isError) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+          return;
+        }
+        const content = result.content[0].type === "text"
+          ? Buffer.from(result.content[0].text, "utf-8")
+          : Buffer.from((result.content[0] as any).data, "base64");
+        res.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
+          "Content-Length": content.length
+        });
+        res.end(content);
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ isError: true, error: err.message }));
+      }
+      return;
+    }
+
+    // SFTP UPLOAD  POST /api/sessions/:id/sftp/upload  multipart/form-data
+    const sftpUploadMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/sftp\/upload$/);
+    if (sftpUploadMatch && req.method === "POST") {
+      const sessionId = sftpUploadMatch[1];
+      const chunks: Buffer[] = [];
+      req.on("data", c => chunks.push(c));
+      req.on("end", async () => {
+        try {
+          const raw = Buffer.concat(chunks);
+          const rawStr = raw.toString("latin1");
+          const boundary = (req.headers["content-type"] || "").split("boundary=")[1];
+          if (!boundary) throw new Error("No boundary in multipart");
+
+          // Parse multipart manually
+          const parts = rawStr.split(`--${boundary}`).filter(p => p !== "--\r\n" && p.trim() !== "" && p !== "--");
+          let uploadPath = "";
+          let fileBuffer: Buffer | null = null;
+
+          for (const part of parts) {
+            const [rawHead, ...bodyParts] = part.split("\r\n\r\n");
+            const body = bodyParts.join("\r\n\r\n").replace(/\r\n$/, "");
+            if (rawHead.includes("name=\"path\"")) {
+              uploadPath = body;
+            } else if (rawHead.includes("name=\"file\"")) {
+              fileBuffer = Buffer.from(body, "latin1");
+            }
+          }
+
+          if (!uploadPath || !fileBuffer) throw new Error("Missing path or file in upload");
+
+          const { handleWriteFile } = await import("./handlers/sftp.js");
+          const result = await handleWriteFile({
+            sessionId,
+            path: uploadPath,
+            content: fileBuffer.toString("base64")
+          }) as any;
+          res.writeHead(result.isError ? 400 : 200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ isError: true, error: err.message }));
+        }
+      });
+      return;
+    }
+
 
     // ======== Kubernetes REST Routes ========
+
     const k8sPodsMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/k8s\/pods$/);
     if (k8sPodsMatch && req.method === "GET") {
       const sessionId = k8sPodsMatch[1];

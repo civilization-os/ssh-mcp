@@ -223,36 +223,80 @@ export default function App() {
           </button>
         </div>
 
-        {/* Tab Selection */}
+        {/* Tab Selection - Upgraded */}
         {selectedSessionId && (
-          <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--panel-border)", display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ padding: "10px 10px", borderBottom: "1px solid var(--panel-border)", display: "flex", flexDirection: "column", gap: "2px" }}>
             {[
-              { id: "terminal", icon: "💻", label: t("tabTerminal") },
-              { id: "sftp", icon: "📂", label: t("tabSftp") },
-              { id: "k8s", icon: "☸️", label: t("tabK8s") },
-              { id: "monitor", icon: "📊", label: t("tabMonitor") }
-            ].map(tab => (
-              <div
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  padding: "10px 12px",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  fontWeight: activeTab === tab.id ? 600 : 500,
-                  background: activeTab === tab.id ? "rgba(255, 255, 255, 0.06)" : "transparent",
-                  color: activeTab === tab.id ? "var(--accent-blue)" : "var(--text-secondary)",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <span>{tab.icon}</span>
-                <span>{tab.label}</span>
-              </div>
-            ))}
+              { id: "terminal", icon: "💻", label: t("tabTerminal"), color: "#00f2fe", glow: "rgba(0,242,254,0.2)" },
+              { id: "sftp",     icon: "📂", label: t("tabSftp"),     color: "#f7971e", glow: "rgba(247,151,30,0.2)"  },
+              { id: "k8s",     icon: "☸️", label: t("tabK8s"),     color: "#a855f7", glow: "rgba(168,85,247,0.2)" },
+              { id: "monitor", icon: "📊", label: t("tabMonitor"), color: "#10b981", glow: "rgba(16,185,129,0.2)" }
+            ].map(tab => {
+              const isActive = activeTab === tab.id;
+              return (
+                <div
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                    fontWeight: isActive ? 700 : 500,
+                    position: "relative",
+                    overflow: "hidden",
+                    background: isActive
+                      ? `linear-gradient(135deg, ${tab.glow}, rgba(255,255,255,0.03))`
+                      : "transparent",
+                    color: isActive ? tab.color : "var(--text-secondary)",
+                    border: isActive ? `1px solid ${tab.color}33` : "1px solid transparent",
+                    transition: "all 0.25s ease",
+                    boxShadow: isActive ? `0 2px 12px ${tab.glow}` : "none",
+                  }}
+                  onMouseEnter={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLDivElement).style.background = "rgba(255,255,255,0.04)";
+                      (e.currentTarget as HTMLDivElement).style.color = "var(--text-primary)";
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLDivElement).style.background = "transparent";
+                      (e.currentTarget as HTMLDivElement).style.color = "var(--text-secondary)";
+                    }
+                  }}
+                >
+                  {/* Active indicator bar */}
+                  {isActive && (
+                    <div style={{
+                      position: "absolute",
+                      left: 0,
+                      top: "20%",
+                      height: "60%",
+                      width: "3px",
+                      borderRadius: "0 3px 3px 0",
+                      background: tab.color,
+                      boxShadow: `0 0 8px ${tab.color}`,
+                    }} />
+                  )}
+                  <span style={{ fontSize: "16px", marginLeft: isActive ? "4px" : "0" }}>{tab.icon}</span>
+                  <span>{tab.label}</span>
+                  {isActive && (
+                    <div style={{
+                      marginLeft: "auto",
+                      width: "6px",
+                      height: "6px",
+                      borderRadius: "50%",
+                      background: tab.color,
+                      boxShadow: `0 0 6px ${tab.color}`,
+                    }} />
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -906,36 +950,58 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
   const [path, setPath] = useState("/");
   const [files, setFiles] = useState<SftpFile[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<SftpFile | null>(null);
+  const [status, setStatus] = useState<{ msg: string; type: "success" | "error" | "" }>({
+    msg: "",
+    type: ""
+  });
+  const [renameTarget, setRenameTarget] = useState<SftpFile | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [mkdirMode, setMkdirMode] = useState(false);
+  const [mkdirName, setMkdirName] = useState("");
+  const uploadRef = useRef<HTMLInputElement>(null);
 
-  const t = (key: keyof typeof translations["en"]): string => {
-    return translations[lang][key] || translations["en"][key] || "";
+  const t = (key: keyof typeof translations["en"]): string =>
+    translations[lang][key] || translations["en"][key] || "";
+
+  const showStatus = (msg: string, type: "success" | "error") => {
+    setStatus({ msg, type });
+    setTimeout(() => setStatus({ msg: "", type: "" }), 3000);
   };
 
   const loadFiles = async (targetPath: string) => {
     setLoading(true);
+    setSelectedFile(null);
     try {
       const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/list?path=${encodeURIComponent(targetPath)}`);
       const data = await res.json();
       if (!data.isError && data.content && data.content[0]) {
         const parsedFiles = JSON.parse(data.content[0].text);
+        // Sort: dirs first, then files, alphabetical
+        parsedFiles.sort((a: SftpFile, b: SftpFile) => {
+          if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
         setFiles(parsedFiles);
         setPath(targetPath);
+      } else {
+        showStatus(data.content?.[0]?.text || "Failed to load", "error");
       }
     } catch (e) {
-      console.error("Failed to load SFTP files:", e);
+      showStatus("Network error", "error");
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadFiles("/");
-  }, [sessionId]);
+  useEffect(() => { loadFiles("/"); }, [sessionId]);
 
   const handleRowClick = (file: SftpFile) => {
     if (file.type === "dir") {
       const slash = path.endsWith("/") ? "" : "/";
       loadFiles(`${path}${slash}${file.name}`);
+    } else {
+      setSelectedFile(prev => prev?.name === file.name ? null : file);
     }
   };
 
@@ -945,78 +1011,368 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
     loadFiles(parentPath);
   };
 
+  const getFilePath = (name: string) => {
+    const slash = path.endsWith("/") ? "" : "/";
+    return `${path}${slash}${name}`;
+  };
+
+  // Delete file / directory
+  const handleDelete = async (file: SftpFile) => {
+    if (!confirm(`${t("confirmDeleteTitle")}\n${file.name}`)) return;
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/sessions/${sessionId}/sftp/delete?path=${encodeURIComponent(getFilePath(file.name))}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json();
+      if (data.isError) throw new Error(data.content?.[0]?.text);
+      showStatus(`✓ ${t("sftpDeletedOk")}: ${file.name}`, "success");
+      loadFiles(path);
+    } catch (e: any) {
+      showStatus(`✗ ${e.message}`, "error");
+    }
+  };
+
+  // Rename
+  const handleRenameSubmit = async () => {
+    if (!renameTarget || !renameValue.trim()) return;
+    try {
+      const oldPath = getFilePath(renameTarget.name);
+      const newPath = getFilePath(renameValue.trim());
+      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oldPath, newPath })
+      });
+      const data = await res.json();
+      if (data.isError) throw new Error(data.content?.[0]?.text);
+      showStatus(`✓ ${t("sftpRenamedOk")}`, "success");
+      setRenameTarget(null);
+      loadFiles(path);
+    } catch (e: any) {
+      showStatus(`✗ ${e.message}`, "error");
+    }
+  };
+
+  // Mkdir
+  const handleMkdir = async () => {
+    if (!mkdirName.trim()) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/mkdir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: getFilePath(mkdirName.trim()) })
+      });
+      const data = await res.json();
+      if (data.isError) throw new Error(data.content?.[0]?.text);
+      showStatus(`✓ ${t("sftpMkdirOk")}: ${mkdirName}`, "success");
+      setMkdirMode(false);
+      setMkdirName("");
+      loadFiles(path);
+    } catch (e: any) {
+      showStatus(`✗ ${e.message}`, "error");
+    }
+  };
+
+  // Download file
+  const handleDownload = async (file: SftpFile) => {
+    if (file.type !== "file") return;
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/sessions/${sessionId}/sftp/download?path=${encodeURIComponent(getFilePath(file.name))}`
+      );
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.name;
+      a.click();
+      URL.revokeObjectURL(url);
+      showStatus(`✓ ${t("sftpDownloadOk")}: ${file.name}`, "success");
+    } catch (e: any) {
+      showStatus(`✗ ${e.message}`, "error");
+    }
+  };
+
+  // Upload file
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("path", getFilePath(file.name));
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/upload`, {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (data.isError) throw new Error(data.content?.[0]?.text);
+      showStatus(`✓ ${t("sftpUploadOk")}: ${file.name}`, "success");
+      loadFiles(path);
+    } catch (e: any) {
+      showStatus(`✗ ${e.message}`, "error");
+    } finally {
+      if (uploadRef.current) uploadRef.current.value = "";
+    }
+  };
+
+  const btnStyle = (color = "rgba(255,255,255,0.08)"): React.CSSProperties => ({
+    background: color,
+    border: "1px solid rgba(255,255,255,0.1)",
+    color: "var(--text-primary)",
+    borderRadius: "6px",
+    padding: "6px 14px",
+    fontSize: "12px",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: "5px",
+    transition: "all 0.2s ease",
+    whiteSpace: "nowrap" as const,
+  });
+
   return (
-    <div style={{ padding: "24px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box", overflow: "hidden" }}>
-      <h2 style={{ fontSize: "20px", fontWeight: 600, marginBottom: "16px" }}>{t("sftpTitle")}</h2>
-      
-      {/* Path bar */}
-      <div className="glass-panel" style={{ padding: "12px 16px", display: "flex", gap: "12px", alignItems: "center", marginBottom: "16px" }}>
-        <button
-          onClick={handleBack}
-          disabled={path === "/"}
-          style={{
-            background: "rgba(255,255,255,0.06)",
-            border: "1px solid var(--panel-border)",
-            color: path === "/" ? "var(--text-secondary)" : "var(--text-primary)",
-            borderRadius: "4px",
-            padding: "4px 12px",
+    <div style={{ padding: "24px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box", overflow: "hidden", gap: "12px" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <h2 style={{ fontSize: "18px", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+          📂 {t("sftpTitle")}
+        </h2>
+        {/* Status Toast */}
+        {status.msg && (
+          <div style={{
             fontSize: "12px",
-            cursor: path === "/" ? "not-allowed" : "pointer"
-          }}
-        >
-          {t("backBtn")}
+            padding: "6px 14px",
+            borderRadius: "6px",
+            background: status.type === "success" ? "rgba(16,185,129,0.15)" : "rgba(245,87,108,0.15)",
+            border: `1px solid ${status.type === "success" ? "rgba(16,185,129,0.4)" : "rgba(245,87,108,0.4)"}`,
+            color: status.type === "success" ? "#10b981" : "var(--accent-pink)",
+            animation: "fadeIn 0.3s ease",
+          }}>
+            {status.msg}
+          </div>
+        )}
+      </div>
+
+      {/* Toolbar */}
+      <div className="glass-panel" style={{ padding: "10px 14px", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+        <button onClick={handleBack} disabled={path === "/"} style={btnStyle()}
+          onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.12)")}
+          onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}>
+          ← {t("backBtn")}
         </button>
-        <div style={{ fontSize: "14px", fontFamily: "monospace", color: "var(--text-secondary)", flex: 1 }}>
-          {t("currPath")}: <span style={{ color: "var(--text-primary)" }}>{path}</span>
+
+        <div style={{ flex: 1, fontFamily: "monospace", fontSize: "13px", color: "var(--text-secondary)", padding: "0 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ color: "var(--accent-blue)" }}>/</span>
+          {path.replace(/^\//, "").split("/").map((seg, i, arr) => (
+            <span key={i}>
+              <span
+                style={{ color: i === arr.length - 1 ? "var(--text-primary)" : "var(--text-secondary)", cursor: "pointer" }}
+                onClick={() => {
+                  const newPath = "/" + arr.slice(0, i + 1).join("/");
+                  loadFiles(newPath);
+                }}
+              >{seg}</span>
+              {i < arr.length - 1 && <span style={{ color: "var(--text-secondary)" }}>/</span>}
+            </span>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+          {/* Mkdir */}
+          <button onClick={() => { setMkdirMode(true); setMkdirName(""); }} style={btnStyle("rgba(247,151,30,0.12)")}>
+            📁 {t("sftpMkdir")}
+          </button>
+          {/* Upload */}
+          <button onClick={() => uploadRef.current?.click()} style={btnStyle("rgba(0,242,254,0.1)")}>
+            ⬆ {t("sftpUpload")}
+          </button>
+          <input ref={uploadRef} type="file" style={{ display: "none" }} onChange={handleUpload} />
+          {/* Refresh */}
+          <button onClick={() => loadFiles(path)} style={btnStyle()}>
+            🔄 {t("sftpRefresh")}
+          </button>
         </div>
       </div>
 
-      {/* Files Grid */}
-      <div className="glass-panel" style={{ flex: 1, overflowY: "auto", padding: "8px" }}>
+      {/* Mkdir input row */}
+      {mkdirMode && (
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <input
+            autoFocus
+            value={mkdirName}
+            onChange={e => setMkdirName(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") handleMkdir(); if (e.key === "Escape") setMkdirMode(false); }}
+            placeholder={t("sftpMkdirPlaceholder")}
+            style={{
+              flex: 1, background: "rgba(0,0,0,0.3)", border: "1px solid var(--panel-border)",
+              borderRadius: "6px", padding: "7px 12px", color: "var(--text-primary)", fontSize: "13px"
+            }}
+          />
+          <button onClick={handleMkdir} style={{ ...btnStyle("rgba(247,151,30,0.2)"), fontWeight: 700 }}>✓ 创建</button>
+          <button onClick={() => setMkdirMode(false)} style={btnStyle()}>✕</button>
+        </div>
+      )}
+
+      {/* Rename inline input */}
+      {renameTarget && (
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", background: "rgba(0,242,254,0.06)", border: "1px solid rgba(0,242,254,0.2)", borderRadius: "8px", padding: "10px 14px" }}>
+          <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>重命名 <span style={{ color: "var(--accent-blue)" }}>{renameTarget.name}</span> →</span>
+          <input
+            autoFocus
+            value={renameValue}
+            onChange={e => setRenameValue(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") handleRenameSubmit(); if (e.key === "Escape") setRenameTarget(null); }}
+            placeholder="新名称"
+            style={{
+              flex: 1, background: "rgba(0,0,0,0.3)", border: "1px solid var(--panel-border)",
+              borderRadius: "6px", padding: "6px 12px", color: "var(--text-primary)", fontSize: "13px"
+            }}
+          />
+          <button onClick={handleRenameSubmit} style={{ ...btnStyle("rgba(0,242,254,0.15)"), fontWeight: 700 }}>✓ 确认</button>
+          <button onClick={() => setRenameTarget(null)} style={btnStyle()}>✕</button>
+        </div>
+      )}
+
+      {/* Files Table */}
+      <div className="glass-panel" style={{ flex: 1, overflowY: "auto", padding: "4px" }}>
         {loading ? (
-          <div style={{ padding: "40px", textAlign: "center", color: "var(--text-secondary)" }}>Loading...</div>
+          <div style={{ padding: "60px", textAlign: "center", color: "var(--text-secondary)" }}>
+            <div style={{ fontSize: "24px", marginBottom: "8px" }}>⏳</div>
+            加载中...
+          </div>
+        ) : files.length === 0 ? (
+          <div style={{ padding: "60px", textAlign: "center", color: "var(--text-secondary)" }}>
+            <div style={{ fontSize: "32px", marginBottom: "8px" }}>📭</div>
+            {t("sftpEmpty")}
+          </div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px", textAlign: "left" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
             <thead>
-              <tr style={{ borderBottom: "1px solid var(--panel-border)", color: "var(--text-secondary)" }}>
-                <th style={{ padding: "12px" }}>{t("fileName")}</th>
-                <th style={{ padding: "12px" }}>{t("fileSize")}</th>
-                <th style={{ padding: "12px" }}>{t("fileTime")}</th>
+              <tr style={{ borderBottom: "1px solid var(--panel-border)", color: "var(--text-secondary)", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <th style={{ padding: "10px 12px" }}>{t("fileName")}</th>
+                <th style={{ padding: "10px 12px", width: "90px" }}>{t("fileSize")}</th>
+                <th style={{ padding: "10px 12px", width: "160px" }}>{t("fileTime")}</th>
+                <th style={{ padding: "10px 12px", width: "160px", textAlign: "right" }}>{t("sftpActions")}</th>
               </tr>
             </thead>
             <tbody>
-              {files.map((file, idx) => (
-                <tr
-                  key={idx}
-                  onClick={() => handleRowClick(file)}
-                  style={{
-                    borderBottom: "1px solid rgba(255,255,255,0.02)",
-                    cursor: file.type === "dir" ? "pointer" : "default",
-                    transition: "background 0.2s"
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.02)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  <td style={{ padding: "12px", display: "flex", gap: "8px", alignItems: "center" }}>
-                    <span>{file.type === "dir" ? "📁" : "📄"}</span>
-                    <span style={{ fontWeight: file.type === "dir" ? 600 : 400, color: file.type === "dir" ? "var(--accent-blue)" : "var(--text-primary)" }}>
-                      {file.name}
-                    </span>
-                  </td>
-                  <td style={{ padding: "12px", color: "var(--text-secondary)" }}>
-                    {file.type === "dir" ? "-" : `${(file.size / 1024).toFixed(1)} KB`}
-                  </td>
-                  <td style={{ padding: "12px", color: "var(--text-secondary)" }}>
-                    {new Date(file.mtime * 1000).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
+              {files.map((file, idx) => {
+                const isSelected = selectedFile?.name === file.name;
+                return (
+                  <tr
+                    key={idx}
+                    onClick={() => handleRowClick(file)}
+                    style={{
+                      borderBottom: "1px solid rgba(255,255,255,0.02)",
+                      cursor: "pointer",
+                      background: isSelected ? "rgba(0,242,254,0.06)" : "transparent",
+                      transition: "background 0.15s"
+                    }}
+                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
+                    onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <td style={{ padding: "10px 12px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ fontSize: "16px" }}>
+                          {file.type === "dir" ? "📁" : getFileIcon(file.name)}
+                        </span>
+                        <span style={{
+                          fontWeight: file.type === "dir" ? 600 : 400,
+                          color: file.type === "dir" ? "#f7971e" : "var(--text-primary)"
+                        }}>
+                          {file.name}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={{ padding: "10px 12px", color: "var(--text-secondary)", fontFamily: "monospace", fontSize: "12px" }}>
+                      {file.type === "dir" ? "—" : formatBytes(file.size)}
+                    </td>
+                    <td style={{ padding: "10px 12px", color: "var(--text-secondary)", fontSize: "12px" }}>
+                      {new Date(file.mtime * 1000).toLocaleString()}
+                    </td>
+                    <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                      <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }} onClick={e => e.stopPropagation()}>
+                        {/* Download (files only) */}
+                        {file.type === "file" && (
+                          <button
+                            title={t("sftpDownload")}
+                            onClick={() => handleDownload(file)}
+                            style={{
+                              background: "rgba(0,242,254,0.08)", border: "1px solid rgba(0,242,254,0.2)",
+                              color: "#00f2fe", borderRadius: "5px", padding: "4px 8px",
+                              fontSize: "11px", cursor: "pointer", transition: "all 0.2s"
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.background = "rgba(0,242,254,0.18)")}
+                            onMouseLeave={e => (e.currentTarget.style.background = "rgba(0,242,254,0.08)")}
+                          >
+                            ⬇ {t("sftpDownload")}
+                          </button>
+                        )}
+                        {/* Rename */}
+                        <button
+                          title={t("sftpRename")}
+                          onClick={() => { setRenameTarget(file); setRenameValue(file.name); }}
+                          style={{
+                            background: "rgba(247,151,30,0.08)", border: "1px solid rgba(247,151,30,0.2)",
+                            color: "#f7971e", borderRadius: "5px", padding: "4px 8px",
+                            fontSize: "11px", cursor: "pointer", transition: "all 0.2s"
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "rgba(247,151,30,0.18)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "rgba(247,151,30,0.08)")}
+                        >
+                          ✏ {t("sftpRename")}
+                        </button>
+                        {/* Delete */}
+                        <button
+                          title={t("sftpDelete")}
+                          onClick={() => handleDelete(file)}
+                          style={{
+                            background: "rgba(245,87,108,0.08)", border: "1px solid rgba(245,87,108,0.2)",
+                            color: "var(--accent-pink)", borderRadius: "5px", padding: "4px 8px",
+                            fontSize: "11px", cursor: "pointer", transition: "all 0.2s"
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "rgba(245,87,108,0.18)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "rgba(245,87,108,0.08)")}
+                        >
+                          🗑 {t("sftpDelete")}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
       </div>
     </div>
   );
+}
+
+// Helper: file type icon
+function getFileIcon(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    js: "🟨", ts: "🔷", tsx: "🔷", jsx: "🟨",
+    json: "📋", md: "📝", txt: "📄", sh: "⚙️",
+    py: "🐍", java: "☕", go: "🐹", rs: "🦀",
+    html: "🌐", css: "🎨", png: "🖼", jpg: "🖼",
+    jpeg: "🖼", gif: "🖼", svg: "🎨", zip: "📦",
+    tar: "📦", gz: "📦", log: "📋", yaml: "⚙️", yml: "⚙️",
+    toml: "⚙️", xml: "📋", sql: "🗃", conf: "⚙️", env: "⚙️",
+  };
+  return map[ext] ?? "📄";
+}
+
+// Helper: format bytes
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 // ======== VIEW 3: Kubernetes View ========
