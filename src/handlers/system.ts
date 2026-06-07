@@ -22,43 +22,53 @@ function execSimple(client: Client, command: string, timeoutMs: number): Promise
 }
 
 // --- System Info ---
-
+ 
 export async function handleSysinfo(args: SshSysinfoArgs) {
   const timeout = args.timeout ?? 15000;
+  const delimiter = "---SYSINFODELIM---";
+  
+  const cmd = [
+    "uname -a",
+    "cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d: -f2",
+    "nproc",
+    "free -h | grep -i -E 'mem|内存' || free -h",
+    "free -h | grep -i -E 'swap|交换' || true",
+    "df -h / | tail -1",
+    "uptime -p 2>/dev/null || uptime",
+    "cat /proc/loadavg 2>/dev/null || echo ''",
+    "uname -r",
+    "uname -m"
+  ].join(`; echo "${delimiter}"; `);
 
-  const result = await resolveClient(args, (client) =>
-    Promise.all([
-      execSimple(client, "uname -a", timeout),
-      execSimple(client, "cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d: -f2", timeout),
-      execSimple(client, "nproc", timeout),
-      execSimple(client, "free -h | grep 'Mem:'", timeout),
-      execSimple(client, "free -h | grep 'Swap:'", timeout),
-      execSimple(client, "df -h / | tail -1", timeout),
-      execSimple(client, "uptime -p 2>/dev/null || uptime", timeout),
-      execSimple(client, "cat /proc/loadavg", timeout),
-      execSimple(client, "uname -r", timeout),
-      execSimple(client, "uname -m", timeout),
-    ])
-  ) as string[];
+  try {
+    const rawOutput = await resolveClient(args, (client) =>
+      execSimple(client, cmd, timeout)
+    ) as string;
 
-  const [uname, cpuModel, cpuCores, memory, swap, disk, uptime, loadavg, kernel, arch] = result;
-  const memMatch = memory.match(/Mem:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/);
-  const swapMatch = swap.match(/Swap:\s+(\S+)\s+(\S+)\s+(\S+)/);
-  const diskMatch = disk.match(/(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)%\s+(\S+)/);
+    const parts = rawOutput.split(new RegExp(`\\r?\\n?${delimiter}\\r?\\n?`));
+    const result = Array.from({ length: 10 }, (_, i) => parts[i] || "");
 
-  const info = [
-    `OS:       ${uname.split(" ")[0] ?? "?"}`,
-    `Kernel:   ${kernel.trim()}`,
-    `Arch:     ${arch.trim()}`,
-    `CPU:      ${(cpuModel ?? "?").trim()} (${(cpuCores ?? "?").trim()} cores)`,
-    `Memory:   ${memMatch ? `total=${memMatch[1]} used=${memMatch[2]} free=${memMatch[3]} (${memMatch[4]})` : memory.trim() || "N/A"}`,
-    `Swap:     ${swapMatch ? `total=${swapMatch[1]} used=${swapMatch[2]} free=${swapMatch[3]}` : swap.trim() || "N/A"}`,
-    `Disk (/): ${diskMatch ? `total=${diskMatch[1]} used=${diskMatch[2]} free=${diskMatch[3]} (${diskMatch[5]}%)` : disk.trim() || "N/A"}`,
-    `Uptime:   ${uptime.trim()}`,
-    `Load:     ${loadavg.trim()}`,
-  ].join("\n");
+    const [uname, cpuModel, cpuCores, memory, swap, disk, uptime, loadavg, kernel, arch] = result;
+    const memMatch = memory.match(/(?:Mem|内存):\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/i);
+    const swapMatch = swap.match(/(?:Swap|交换):\s+(\S+)\s+(\S+)\s+(\S+)/i);
+    const diskMatch = disk.match(/(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)%\s+(\S+)/);
 
-  return { content: [{ type: "text" as const, text: info }] };
+    const info = [
+      `OS:       ${uname.split(" ")[0] ?? "?"}`,
+      `Kernel:   ${kernel.trim()}`,
+      `Arch:     ${arch.trim()}`,
+      `CPU:      ${(cpuModel ?? "?").trim()} (${(cpuCores ?? "?").trim()} cores)`,
+      `Memory:   ${memMatch ? `total=${memMatch[1]} used=${memMatch[2]} free=${memMatch[3]} (${memMatch[4]})` : memory.trim() || "N/A"}`,
+      `Swap:     ${swapMatch ? `total=${swapMatch[1]} used=${swapMatch[2]} free=${swapMatch[3]}` : swap.trim() || "N/A"}`,
+      `Disk (/): ${diskMatch ? `total=${diskMatch[1]} used=${diskMatch[2]} free=${diskMatch[3]} (${diskMatch[5]}%)` : disk.trim() || "N/A"}`,
+      `Uptime:   ${uptime.trim()}`,
+      `Load:     ${loadavg.trim()}`,
+    ].join("\n");
+
+    return { content: [{ type: "text" as const, text: info }] };
+  } catch (err: any) {
+    return { content: [{ type: "text" as const, text: `Failed to load system info: ${err.message}` }], isError: true };
+  }
 }
 
 // --- Processes ---

@@ -1154,9 +1154,16 @@ function MonitorView({ sessionId, lang }: MonitorViewProps) {
         const list: ProcessInfo[] = [];
         for (let i = 1; i < lines.length; i++) {
           const cols = lines[i].trim().split(/\s+/);
-          if (cols.length >= 4) {
+          if (cols.length >= 11) {
             list.push({
-              pid: parseInt(cols[0], 10),
+              pid: parseInt(cols[1], 10) || 0,
+              cpu: cols[2],
+              mem: cols[3],
+              command: cols.slice(10).join(" ")
+            });
+          } else if (cols.length >= 4) {
+            list.push({
+              pid: parseInt(cols[0], 10) || 0,
               cpu: cols[1],
               mem: cols[2],
               command: cols.slice(3).join(" ")
