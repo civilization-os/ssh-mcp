@@ -39,6 +39,13 @@ import {
   handleLogSearch,
 } from "./handlers/system.js";
 import {
+  handleK8sListPods,
+  handleK8sPodLogs,
+  handleK8sPodExec,
+  handleK8sPodCp,
+  handleK8sArthasAttach,
+} from "./handlers/k8s.js";
+import {
   handleShellCreate,
   handleShellWrite,
   handleShellRead,
@@ -47,6 +54,7 @@ import {
   handleShellList,
   cleanShellsBySession,
 } from "./handlers/shell.js";
+import { startHttpServer } from "./server.js";
 import {
   validateSshConnectArgs,
   validateSshDisconnectArgs,
@@ -73,6 +81,11 @@ import {
   validateSshShellReadArgs,
   validateSshShellResizeArgs,
   validateSshShellCloseArgs,
+  validateSshK8sListPodsArgs,
+  validateSshK8sPodLogsArgs,
+  validateSshK8sPodExecArgs,
+  validateSshK8sPodCpArgs,
+  validateSshK8sArthasAttachArgs,
   extractCredentials,
   extractSessionId,
 } from "./types.js";
@@ -462,6 +475,86 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["path", "pattern"],
       },
     },
+    // ======== Kubernetes ========
+    {
+      name: "ssh_k8s_list_pods",
+      description: "List Kubernetes pods in all namespaces or a specific namespace.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session ID" },
+          ...authFields,
+          namespace: { type: "string", description: "Optional specific namespace (lists all namespaces if omitted)" }
+        }
+      }
+    },
+    {
+      name: "ssh_k8s_pod_logs",
+      description: "Fetch logs from a Kubernetes pod container.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session ID" },
+          ...authFields,
+          namespace: { type: "string", description: "Kubernetes namespace" },
+          pod: { type: "string", description: "Pod name" },
+          container: { type: "string", description: "Optional container name (defaults to first container)" },
+          tail: { type: "number", description: "Lines of tail log to fetch (default: 100)", default: 100 }
+        },
+        required: ["namespace", "pod"]
+      }
+    },
+    {
+      name: "ssh_k8s_pod_exec",
+      description: "Execute a command inside a Kubernetes pod container.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session ID" },
+          ...authFields,
+          namespace: { type: "string", description: "Kubernetes namespace" },
+          pod: { type: "string", description: "Pod name" },
+          container: { type: "string", description: "Optional container name" },
+          command: { type: "string", description: "Command to execute inside the container" }
+        },
+        required: ["namespace", "pod", "command"]
+      }
+    },
+    {
+      name: "ssh_k8s_pod_cp",
+      description: "Copy files/directories between host and Kubernetes pod container.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session ID" },
+          ...authFields,
+          namespace: { type: "string", description: "Kubernetes namespace" },
+          pod: { type: "string", description: "Pod name" },
+          container: { type: "string", description: "Optional container name" },
+          direction: { type: "string", description: "Direction: 'to_pod' or 'from_pod'", enum: ["to_pod", "from_pod"] },
+          hostPath: { type: "string", description: "Path on the jump host" },
+          podPath: { type: "string", description: "Path on the pod container" }
+        },
+        required: ["namespace", "pod", "direction", "hostPath", "podPath"]
+      }
+    },
+    {
+      name: "ssh_k8s_arthas_attach",
+      description: "Attach Arthas to a Java process on the host or inside a pod, and execute a command.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session ID" },
+          ...authFields,
+          namespace: { type: "string", description: "Kubernetes namespace (omit if running on host)" },
+          pod: { type: "string", description: "Pod name (omit if running on host)" },
+          container: { type: "string", description: "Optional container name" },
+          pid: { type: "number", description: "Optional target Java PID (auto-detected if omitted)" },
+          command: { type: "string", description: "Arthas command to run (e.g. 'thread -n 3', 'dashboard -n 1')" }
+        },
+        required: ["command"]
+      }
+    },
   ],
 }));
 
@@ -647,6 +740,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleLogSearch(args);
       }
 
+      // Kubernetes
+      case "ssh_k8s_list_pods": {
+        if (!validateSshK8sListPodsArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "Invalid parameters");
+        }
+        return await handleK8sListPods(args);
+      }
+
+      case "ssh_k8s_pod_logs": {
+        if (!validateSshK8sPodLogsArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "namespace and pod are required");
+        }
+        return await handleK8sPodLogs(args);
+      }
+
+      case "ssh_k8s_pod_exec": {
+        if (!validateSshK8sPodExecArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "namespace, pod and command are required");
+        }
+        return await handleK8sPodExec(args);
+      }
+
+      case "ssh_k8s_pod_cp": {
+        if (!validateSshK8sPodCpArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "namespace, pod, direction, hostPath, podPath are required");
+        }
+        return await handleK8sPodCp(args);
+      }
+
+      case "ssh_k8s_arthas_attach": {
+        if (!validateSshK8sArthasAttachArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "command is required");
+        }
+        return await handleK8sArthasAttach(args);
+      }
+
       // Interactive Shell
       case "ssh_shell": {
         if (!validateSshShellArgs(args)) {
@@ -703,6 +832,9 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("SSH MCP server running on stdio");
+  
+  // Start REST/WebSocket server for frontend client integration
+  startHttpServer(12222);
 }
 
 main().catch((err) => {

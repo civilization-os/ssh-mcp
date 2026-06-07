@@ -341,3 +341,31 @@ export function validateSshShellResizeArgs(args: unknown): args is SshShellResiz
 export function validateSshShellCloseArgs(args: unknown): args is SshShellCloseArgs {
   return isRecord(args) && typeof args.shellId === "string";
 }
+
+// ======== Kubernetes Validators ========
+
+export function validateSshK8sListPodsArgs(args: unknown): boolean {
+  return isRecord(args);
+}
+
+export function validateSshK8sPodLogsArgs(args: unknown): boolean {
+  return isRecord(args) && typeof args.pod === "string" && typeof args.namespace === "string";
+}
+
+export function validateSshK8sPodExecArgs(args: unknown): boolean {
+  return isRecord(args) && typeof args.pod === "string" && typeof args.namespace === "string" && typeof args.command === "string";
+}
+
+export function validateSshK8sPodCpArgs(args: unknown): boolean {
+  return isRecord(args) && 
+         typeof args.pod === "string" && 
+         typeof args.namespace === "string" && 
+         typeof args.hostPath === "string" && 
+         typeof args.podPath === "string" && 
+         (args.direction === "to_pod" || args.direction === "from_pod");
+}
+
+export function validateSshK8sArthasAttachArgs(args: unknown): boolean {
+  return isRecord(args) && typeof args.command === "string";
+}
+

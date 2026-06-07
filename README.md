@@ -154,6 +154,38 @@ In OpenCode config:
 
 > **Note:** All clients above follow the same [MCP stdio protocol](https://modelcontextprotocol.io). The only difference is where the config file lives. Replace `/path/to/ssh-mcp/` with your actual install directory.
 
+### Dashboard UI
+
+To provide a more intuitive and visual terminal-cooperation workflow, this project embeds a modern, glassmorphic UI dashboard.
+
+#### Core Panels
+1. **💻 Terminal (WebShell)**: An interactive pseudo-terminal (PTY) console supporting keyboard inputs and live ANSI color code rendering.
+2. **📂 Files (SFTP Explorer)**: A visual file navigator allowing you to browse the remote directory tree, double-click into folders, and navigate back.
+3. **☸️ Kubernetes**: Lists Pods across namespaces, displays real-time logs, and provides a built-in Arthas container diagnostician panel for automated code attach and diagnostics execution.
+4. **📊 Monitoring**: Displays real-time server load statistics (CPU, Memory, Disk) and active processes sorted by CPU/Memory utilization.
+5. **🔌 Connection Manager**: Allows you to click the `+` button in the sidebar to fill in host, port, username, and authentication credentials (password/private key) to launch new SSH sessions directly from the UI.
+
+#### Local Development & Testing
+
+To test the visual dashboard with a local mock environment:
+
+##### 1. Compile & launch mock backend
+```bash
+npm run build
+node run_local_mock.mjs
+```
+This launches a mock SSH server (port `22222`), spawns the REST API backend (port `12222`), and seeds an active session named `Mock-Server-Local`.
+
+##### 2. Start the Vite UI Server
+```bash
+cd ui
+npm run dev
+```
+Open `http://localhost:5174/` in your browser.
+
+##### 3. Using the UI
+You can immediately view the pre-seeded mock environment or click the **`+`** button next to `SSH Sessions` (or follow the empty state guide card) to input real server credentials and establish direct connections. Once selected, all four tabs will dynamically reload to target the new session context.
+
 ### Architecture
 
 ```

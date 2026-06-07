@@ -14,6 +14,7 @@ interface ShellSession {
   buffer: string;
   closed: boolean;
   createdAt: number;
+  wsClients?: Set<any>;
 }
 
 const shells = new Map<string, ShellSession>();
@@ -73,6 +74,50 @@ export function cleanShellsBySession(sessionId: string) {
   }
 }
 
+// --- WebSocket Support Helpers ---
+
+export function attachWsToShell(shellId: string, ws: any) {
+  const shell = shells.get(shellId);
+  if (!shell) return false;
+  if (!shell.wsClients) {
+    shell.wsClients = new Set();
+  }
+  shell.wsClients.add(ws);
+  if (shell.buffer) {
+    ws.send(shell.buffer);
+  }
+  return true;
+}
+
+export function detachWsFromShell(shellId: string, ws: any) {
+  const shell = shells.get(shellId);
+  if (shell && shell.wsClients) {
+    shell.wsClients.delete(ws);
+  }
+}
+
+export function writeInputToShell(shellId: string, data: string) {
+  const shell = shells.get(shellId);
+  if (shell && !shell.closed) {
+    shell.channel.stdin.write(data, "utf-8");
+    return true;
+  }
+  return false;
+}
+
+export function listActiveShells() {
+  const result: { id: string; sessionId: string; closed: boolean; age: number }[] = [];
+  for (const shell of shells.values()) {
+    result.push({
+      id: shell.id,
+      sessionId: shell.sessionId,
+      closed: shell.closed,
+      age: Math.floor((Date.now() - shell.createdAt) / 1000)
+    });
+  }
+  return result;
+}
+
 // --- Handlers ---
 
 export async function handleShellCreate(args: SshShellArgs) {
@@ -105,15 +150,26 @@ export async function handleShellCreate(args: SshShellArgs) {
       };
 
       channel.on("data", (data: Buffer) => {
-        appendBuffer(shell, data.toString("utf-8"));
+        const str = data.toString("utf-8");
+        appendBuffer(shell, str);
+        shell.wsClients?.forEach(ws => {
+          if (ws.readyState === 1) ws.send(str);
+        });
       });
 
       channel.stderr.on("data", (data: Buffer) => {
-        appendBuffer(shell, data.toString("utf-8"));
+        const str = data.toString("utf-8");
+        appendBuffer(shell, str);
+        shell.wsClients?.forEach(ws => {
+          if (ws.readyState === 1) ws.send(str);
+        });
       });
 
       channel.on("close", () => {
         shell.closed = true;
+        shell.wsClients?.forEach(ws => {
+          if (ws.readyState === 1) ws.send("\r\n[Shell session closed]\r\n");
+        });
       });
 
       channel.on("error", (err: Error) => {

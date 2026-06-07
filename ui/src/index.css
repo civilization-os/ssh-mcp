@@ -1,0 +1,93 @@
+/* Glassmorphism & Cyberpunk Neon Theme */
+@import "xterm/css/xterm.css";
+
+:root {
+  --bg-gradient: radial-gradient(circle at top right, #11121d, #08090f);
+  --panel-bg: rgba(255, 255, 255, 0.02);
+  --panel-border: rgba(255, 255, 255, 0.06);
+  --panel-hover-border: rgba(0, 242, 254, 0.3);
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --accent-blue: #00f2fe;
+  --accent-indigo: #4facfe;
+  --accent-neon: #00ff88;
+  --accent-pink: #f5576c;
+  --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-gradient);
+  color: var(--text-primary);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 242, 254, 0.4);
+}
+
+.glass-panel {
+  background: var(--panel-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--shadow);
+  border-radius: 12px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-panel:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.glow-btn {
+  background: linear-gradient(135deg, var(--accent-blue), var(--accent-indigo));
+  border: none;
+  color: #000;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.3);
+}
+
+.glow-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 18px rgba(0, 242, 254, 0.6);
+  filter: brightness(1.1);
+}
+
+.glow-btn:active {
+  transform: translateY(1px);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--accent-blue), var(--accent-indigo));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Terminal container overrides */
+.terminal {
+  padding: 10px;
+  background: #000 !important;
+  border-radius: 8px;
+}
+
+.xterm-viewport {
+  background-color: #000 !important;
+}
