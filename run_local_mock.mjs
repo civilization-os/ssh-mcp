@@ -151,12 +151,23 @@ const sshServer = new Server({
 
 sshServer.listen(PORT, "127.0.0.1", () => {
   console.log(`[Mock SSH Server] listening on 127.0.0.1:${PORT}`);
-  
+
   // 2. Start MCP Server (which starts HTTP server on 12222)
   console.log("Starting MCP Server...");
   const mcpServer = spawn("node", ["build/index.js"], { stdio: ["pipe", "pipe", "inherit"] });
-  
-  // 3. Wait for MCP Server to boot, then seed the SSH connection
+
+  // 3. Start Frontend Vite Dev Server
+  console.log("Starting Frontend Dev Server (Vite)...");
+  const viteServer = spawn("npm", ["run", "dev"], {
+    cwd: new URL("./ui", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1"), // Windows path fix
+    stdio: "inherit",
+    shell: true
+  });
+  viteServer.on("error", (err) => {
+    console.error("[Vite] Failed to start:", err.message);
+  });
+
+  // 4. Wait for MCP Server to boot, then seed the SSH connection
   setTimeout(() => {
     console.log("Seeding SSH Session in connection pool...");
     const postData = JSON.stringify({
@@ -183,9 +194,10 @@ sshServer.listen(PORT, "127.0.0.1", () => {
         console.log(`[Seeding Response] Status: ${res.statusCode}`, responseBody);
         console.log("\n==================================================");
         console.log("🎉 Local Mock Environment is FULLY READY!");
-        console.log("👉 Go to your browser: http://localhost:5174/");
-        console.log("👉 You will see 'Mock-Server-Local' session active.");
-        console.log("👉 Click '+ NEW' in the sidebar to open a real PTY!");
+        console.log("👉 Frontend UI:  http://localhost:5174/");
+        console.log("👉 Backend API:  http://localhost:12222/api/sessions");
+        console.log("👉 Session 'Mock-Server-Local' is already connected.");
+        console.log("👉 Click '+ NEW' in the sidebar to open a PTY shell.");
         console.log("==================================================\n");
       });
     });
@@ -198,7 +210,10 @@ sshServer.listen(PORT, "127.0.0.1", () => {
     req.end();
   }, 2500);
 
+  // Cleanup on Ctrl+C
   process.on("SIGINT", () => {
+    console.log("\nShutting down all services...");
+    viteServer.kill();
     mcpServer.kill();
     sshServer.close(() => {
       console.log("Stopped local mock environment.");
