@@ -51,6 +51,9 @@ export default function App() {
   const [connectLoading, setConnectLoading] = useState(false);
   const [connectError, setConnectError] = useState("");
 
+  // Confirm delete modal
+  const [confirmTarget, setConfirmTarget] = useState<{ id: string; label: string } | null>(null);
+
   const [lang, setLang] = useState<Language>(() => {
     return navigator.language.startsWith("zh") ? "zh" : "en";
   });
@@ -149,12 +152,23 @@ export default function App() {
     }
   };
 
-  const handleDeleteSession = async (sessionId: string) => {
+  // Show confirm dialog instead of deleting directly
+  const handleDeleteSession = (sessionId: string) => {
+    const sess = sessions.find(s => s.id === sessionId);
+    if (!sess) return;
+    setConfirmTarget({ id: sessionId, label: sess.label });
+  };
+
+  // Actually execute delete after user confirmed
+  const handleConfirmDelete = async () => {
+    if (!confirmTarget) return;
+    const { id } = confirmTarget;
+    setConfirmTarget(null);
     try {
-      await fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: "DELETE" });
-      setSessions(prev => prev.filter(s => s.id !== sessionId));
-      setShells(prev => prev.filter(s => s.sessionId !== sessionId));
-      if (selectedSessionId === sessionId) {
+      await fetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE" });
+      setSessions(prev => prev.filter(s => s.id !== id));
+      setShells(prev => prev.filter(s => s.sessionId !== id));
+      if (selectedSessionId === id) {
         setSelectedSessionId("");
         setActiveShellId("");
       }
@@ -461,6 +475,118 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* ===== Confirm Delete Modal ===== */}
+      {confirmTarget && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100vw",
+          height: "100vh",
+          background: "rgba(0,0,0,0.65)",
+          backdropFilter: "blur(10px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1100,
+        }}>
+          <div className="glass-panel" style={{
+            width: "420px",
+            padding: "32px 28px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "20px",
+            border: "1px solid rgba(245, 87, 108, 0.3)",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(245,87,108,0.08)",
+          }}>
+            {/* Icon + Title */}
+            <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+              <div style={{
+                width: "44px",
+                height: "44px",
+                borderRadius: "50%",
+                background: "rgba(245, 87, 108, 0.12)",
+                border: "1px solid rgba(245, 87, 108, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "20px",
+                flexShrink: 0,
+              }}>⚠️</div>
+              <div>
+                <div style={{ fontSize: "17px", fontWeight: 700, color: "var(--text-primary)", marginBottom: "2px" }}>
+                  {t("confirmDeleteTitle")}
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                  {t("confirmDeleteHint")}
+                </div>
+              </div>
+            </div>
+
+            {/* Session name highlight */}
+            <div style={{
+              background: "rgba(245, 87, 108, 0.08)",
+              border: "1px solid rgba(245, 87, 108, 0.2)",
+              borderRadius: "8px",
+              padding: "12px 16px",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+            }}>
+              <span style={{ fontSize: "16px" }}>🖥️</span>
+              <div>
+                <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--accent-pink)" }}>
+                  {confirmTarget.label}
+                </div>
+                <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                  ID: {confirmTarget.id}
+                </div>
+              </div>
+            </div>
+
+            {/* Buttons */}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+              <button
+                onClick={() => setConfirmTarget(null)}
+                style={{
+                  background: "transparent",
+                  border: "1px solid var(--panel-border)",
+                  color: "var(--text-secondary)",
+                  borderRadius: "6px",
+                  padding: "9px 20px",
+                  fontSize: "14px",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.3)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--panel-border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)"; }}
+              >
+                {t("cancelBtn")}
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                style={{
+                  background: "linear-gradient(135deg, #f5576c, #c0392b)",
+                  border: "none",
+                  color: "#fff",
+                  borderRadius: "6px",
+                  padding: "9px 22px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                  boxShadow: "0 4px 15px rgba(245,87,108,0.4)",
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 6px 20px rgba(245,87,108,0.6)"; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 4px 15px rgba(245,87,108,0.4)"; (e.currentTarget as HTMLButtonElement).style.transform = "none"; }}
+              >
+                {t("confirmDeleteBtn")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Connection Modal */}
       {showCreateModal && (

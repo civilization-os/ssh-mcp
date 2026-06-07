@@ -52,7 +52,11 @@ export const translations = {
     cancelBtn: "取消",
     connectFailed: "连接失败",
     emptyStateTitle: "开始体验 SSH-MCP 控制台",
-    emptyStateDesc: "请连接一台远程服务器以激活交互终端、SFTP 文件管理、Kubernetes 容器看板及系统资源负载监控。"
+    emptyStateDesc: "请连接一台远程服务器以激活交互终端、SFTP 文件管理、Kubernetes 容器看板及系统资源负载监控。",
+    // Confirm delete
+    confirmDeleteTitle: "确认断开并删除会话？",
+    confirmDeleteHint: "此操作将断开 SSH 连接并从持久化存储中移除，无法撤销。",
+    confirmDeleteBtn: "确认删除"
   },
   en: {
     title: "SSH-MCP Console",
@@ -107,7 +111,11 @@ export const translations = {
     cancelBtn: "Cancel",
     connectFailed: "Connection failed",
     emptyStateTitle: "Welcome to SSH-MCP Console",
-    emptyStateDesc: "Connect to a remote server to enable Interactive WebShell, SFTP file management, Kubernetes dashboard, and System load diagnostics."
+    emptyStateDesc: "Connect to a remote server to enable Interactive WebShell, SFTP file management, Kubernetes dashboard, and System load diagnostics.",
+    // Confirm delete
+    confirmDeleteTitle: "Disconnect & Remove Session?",
+    confirmDeleteHint: "This will terminate the SSH connection and remove it from persistent storage. This cannot be undone.",
+    confirmDeleteBtn: "Delete Session"
   }
 };
 
