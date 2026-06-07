@@ -8,6 +8,8 @@ import {
   McpError,
   ErrorCode,
 } from "@modelcontextprotocol/sdk/types.js";
+import path from "path";
+import { fileURLToPath } from "url";
 
 import {
   createSession,
@@ -832,8 +834,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("SSH MCP server running on stdio");
-  
+
+  // Resolve absolute path to this build file for MCP client config
+  const selfPath = process.argv[1]
+    ? path.resolve(process.argv[1])
+    : path.join(path.dirname(fileURLToPath(import.meta.url)), "index.js");
+
+  const mcpConfig = {
+    mcpServers: {
+      "ssh-mcp": {
+        command: "node",
+        args: [selfPath]
+      }
+    }
+  };
+
+  console.error("╔══════════════════════════════════════════════════════════╗");
+  console.error("║              SSH-MCP Server — READY                     ║");
+  console.error("╠══════════════════════════════════════════════════════════╣");
+  console.error("║  Protocol : stdio (MCP JSON-RPC)                        ║");
+  console.error("║  REST/WS  : http://localhost:12222                      ║");
+  console.error("║  Web UI   : http://localhost:5174                       ║");
+  console.error("╠══════════════════════════════════════════════════════════╣");
+  console.error("║  Add to your MCP client (e.g. Claude Desktop):          ║");
+  console.error("╚══════════════════════════════════════════════════════════╝");
+  console.error(JSON.stringify(mcpConfig, null, 2));
+  console.error("────────────────────────────────────────────────────────────");
+
   // Start REST/WebSocket server for frontend client integration
   startHttpServer(12222);
 
