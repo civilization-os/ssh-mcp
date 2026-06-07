@@ -1,23 +1,103 @@
 import { Client, ConnectConfig } from "ssh2";
 import { Session, SshCredentials } from "./types.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SESSIONS_STORE_PATH = path.join(__dirname, "..", "sessions-store.json");
 
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 
 let nextId = 1;
 const sessions = new Map<string, Session>();
+
+// 凭据持久化存储结构
+interface StoredCredentials {
+  id: string;
+  label: string;
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  privateKey?: string;
+  passphrase?: string;
+}
+
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+// ======== 持久化读写 ========
+
+function saveSessionsStore() {
+  try {
+    const stored: StoredCredentials[] = [];
+    for (const [id, session] of sessions) {
+      const cred = (session as any)._creds as StoredCredentials | undefined;
+      if (cred) stored.push({ ...cred, id });
+    }
+    fs.writeFileSync(SESSIONS_STORE_PATH, JSON.stringify(stored, null, 2), "utf-8");
+  } catch (e) {
+    console.error("[session] Failed to save sessions store:", e);
+  }
+}
+
+function loadStoredCredentials(): StoredCredentials[] {
+  try {
+    if (!fs.existsSync(SESSIONS_STORE_PATH)) return [];
+    const raw = fs.readFileSync(SESSIONS_STORE_PATH, "utf-8");
+    return JSON.parse(raw) as StoredCredentials[];
+  } catch {
+    return [];
+  }
+}
+
+/** 启动时读取持久化文件并逐一重连，失败则跳过 */
+export async function loadAndReconnectSessions(): Promise<void> {
+  const stored = loadStoredCredentials();
+  if (stored.length === 0) return;
+  console.error(`[session] Restoring ${stored.length} persisted session(s)...`);
+
+  for (const cred of stored) {
+    try {
+      const client = await sshConnect(cred, 10000);
+      const session: Session = {
+        id: cred.id,
+        client,
+        label: cred.label,
+        host: cred.host,
+        port: cred.port,
+        username: cred.username,
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+      };
+      (session as any)._creds = cred;
+      sessions.set(session.id, session);
+      startCleanup();
+      console.error(`[session] Restored: ${cred.label} (${cred.id})`);
+    } catch (e: any) {
+      console.error(`[session] Failed to restore ${cred.label}: ${e.message}`);
+    }
+  }
+  // 重新保存（跳过失败的连接）
+  saveSessionsStore();
+}
+
+// ======== 工具函数 ========
 
 function startCleanup() {
   if (cleanupTimer) return;
   cleanupTimer = setInterval(() => {
     const now = Date.now();
+    let changed = false;
     for (const [id, session] of sessions) {
       if (now - session.lastUsedAt > SESSION_IDLE_TIMEOUT_MS) {
         try { session.client.end(); } catch { /* ignore */ }
         sessions.delete(id);
+        changed = true;
       }
     }
+    if (changed) saveSessionsStore();
     if (sessions.size === 0 && cleanupTimer) {
       clearInterval(cleanupTimer);
       cleanupTimer = null;
@@ -71,8 +151,9 @@ export function sshConnect(creds: Partial<SshCredentials>, timeoutMs: number): P
 export async function createSession(creds: Partial<SshCredentials>, label?: string): Promise<Session> {
   const timeout = creds.timeout ?? 15000;
   const client = await sshConnect(creds, timeout);
+  const id = generateId();
   const session: Session = {
-    id: generateId(),
+    id,
     client,
     label: label ?? `${creds.username ?? "root"}@${creds.host}:${creds.port ?? 22}`,
     host: creds.host ?? "unknown",
@@ -81,8 +162,23 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
   };
+
+  // 存储凭据供持久化使用
+  const storedCred: StoredCredentials = {
+    id,
+    label: session.label,
+    host: session.host,
+    port: session.port,
+    username: session.username,
+    password: creds.password,
+    privateKey: creds.privateKey ? String(creds.privateKey) : undefined,
+    passphrase: creds.passphrase,
+  };
+  (session as any)._creds = storedCred;
+
   sessions.set(session.id, session);
   startCleanup();
+  saveSessionsStore();
   return session;
 }
 
@@ -99,6 +195,7 @@ export function disconnectSession(sessionId: string): boolean {
   if (!session) return false;
   try { session.client.end(); } catch { /* ignore */ }
   sessions.delete(sessionId);
+  saveSessionsStore();
   return true;
 }
 
@@ -118,7 +215,7 @@ export function listSessions(): Omit<Session, "client">[] {
   return result;
 }
 
-/** Resolve sessionId or create a one-shot connection. Returns a cleanup function. */
+/** Resolve sessionId or create a one-shot connection. */
 export async function resolveClient(
   args: { sessionId?: string } & Partial<SshCredentials>,
   fn: (client: Client) => Promise<unknown>

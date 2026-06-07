@@ -149,6 +149,32 @@ export default function App() {
     }
   };
 
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: "DELETE" });
+      setSessions(prev => prev.filter(s => s.id !== sessionId));
+      setShells(prev => prev.filter(s => s.sessionId !== sessionId));
+      if (selectedSessionId === sessionId) {
+        setSelectedSessionId("");
+        setActiveShellId("");
+      }
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+    }
+  };
+
+  const handleCloseShell = async (shellId: string) => {
+    try {
+      await fetch(`${API_BASE}/api/shells/${shellId}`, { method: "DELETE" });
+      setShells(prev => prev.filter(s => s.id !== shellId));
+      if (activeShellId === shellId) {
+        setActiveShellId("");
+      }
+    } catch (err) {
+      console.error("Failed to close shell:", err);
+    }
+  };
+
   const filteredShells = shells.filter(s => s.sessionId === selectedSessionId);
 
   return (
@@ -262,15 +288,39 @@ export default function App() {
                   cursor: "pointer",
                   background: selectedSessionId === sess.id ? "rgba(0, 242, 254, 0.08)" : "transparent",
                   border: `1px solid ${selectedSessionId === sess.id ? "var(--accent-blue)" : "transparent"}`,
-                  transition: "all 0.2s ease"
+                  transition: "all 0.2s ease",
+                  position: "relative"
                 }}
               >
-                <div style={{ fontWeight: 600, fontSize: "14px", color: selectedSessionId === sess.id ? "var(--accent-blue)" : "var(--text-primary)" }}>
+                <div style={{ fontWeight: 600, fontSize: "14px", color: selectedSessionId === sess.id ? "var(--accent-blue)" : "var(--text-primary)", paddingRight: "24px" }}>
                   {sess.label}
                 </div>
                 <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
                   {sess.username}@{sess.host}
                 </div>
+                {/* Delete session button */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDeleteSession(sess.id); }}
+                  title="断开并删除此会话"
+                  style={{
+                    position: "absolute",
+                    top: "8px",
+                    right: "8px",
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--text-secondary)",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                    lineHeight: 1,
+                    padding: "2px 4px",
+                    borderRadius: "4px",
+                    transition: "color 0.2s ease"
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--accent-pink)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
+                >
+                  ✕
+                </button>
               </div>
             ))
           )}
@@ -323,9 +373,28 @@ export default function App() {
                         {sh.id.substring(3, 11)}...
                       </span>
                     </div>
-                    <span style={{ fontSize: "10px", color: "var(--text-secondary)" }}>
-                      {sh.age}s
-                    </span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span style={{ fontSize: "10px", color: "var(--text-secondary)" }}>{sh.age}s</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleCloseShell(sh.id); }}
+                        title="关闭此终端"
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--text-secondary)",
+                          cursor: "pointer",
+                          fontSize: "12px",
+                          lineHeight: 1,
+                          padding: "2px 4px",
+                          borderRadius: "4px",
+                          transition: "color 0.2s ease"
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = "var(--accent-pink)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
+                      >
+                        ✕
+                      </button>
+                    </div>
                   </div>
                 ))
               )}

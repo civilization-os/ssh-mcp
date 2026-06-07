@@ -13,6 +13,7 @@ import {
   createSession,
   disconnectSession,
   listSessions,
+  loadAndReconnectSessions,
 } from "./session.js";
 import {
   handleExec,
@@ -835,6 +836,9 @@ async function main() {
   
   // Start REST/WebSocket server for frontend client integration
   startHttpServer(12222);
+
+  // Restore persisted sessions from previous run
+  await loadAndReconnectSessions();
 }
 
 main().catch((err) => {

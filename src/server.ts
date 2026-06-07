@@ -1,6 +1,6 @@
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { listSessions } from "./session.js";
+import { listSessions, disconnectSession } from "./session.js";
 import {
   attachWsToShell,
   detachWsFromShell,
@@ -12,7 +12,7 @@ export function startHttpServer(port: number = 12222) {
   const server = http.createServer(async (req, res) => {
     // Add CORS headers for Vite/frontend development
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (req.method === "OPTIONS") {
@@ -54,6 +54,41 @@ export function startHttpServer(port: number = 12222) {
       return;
     }
 
+    // DELETE /api/sessions/:sessionId
+    const sessionDeleteMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)$/);
+    if (sessionDeleteMatch && req.method === "DELETE") {
+      const sessionId = sessionDeleteMatch[1];
+      try {
+        const ok = disconnectSession(sessionId);
+        if (ok) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, message: `Session ${sessionId} disconnected` }));
+        } else {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: "Session not found" }));
+        }
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+      return;
+    }
+
+    // DELETE /api/shells/:shellId
+    const shellDeleteMatch = url.pathname.match(/^\/api\/shells\/([^\/]+)$/);
+    if (shellDeleteMatch && req.method === "DELETE") {
+      const shellId = shellDeleteMatch[1];
+      try {
+        const { handleShellClose } = await import("./handlers/shell.js");
+        const result = await handleShellClose({ shellId });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: !result.isError }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+      return;
+    }
 
     if (url.pathname === "/api/shells" && req.method === "GET") {
       const shells = listActiveShells();
