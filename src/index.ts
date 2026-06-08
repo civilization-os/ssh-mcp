@@ -105,6 +105,11 @@ const authFields = {
   timeout: { type: "number" as const, description: "Operation timeout in milliseconds (default: 30000)", default: 30000 },
 };
 
+const k8sConfigFields = {
+  kubectlPath: { type: "string" as const, description: "Optional custom kubectl path on the remote host" },
+  kubeconfig: { type: "string" as const, description: "Optional custom kubeconfig path on the remote host" },
+};
+
 const sessionAuthFields = {
   sessionId: { type: "string" as const, description: "Session ID from ssh_connect (alternative to host/password)" },
   ...authFields,
@@ -130,6 +135,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           name: { type: "string", description: "Optional label for the session" },
           ...authFields,
+          ...k8sConfigFields,
         },
         required: ["host"],
       },
@@ -154,7 +160,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ======== Command Execution ========
     {
       name: "ssh_exec",
-      description: "Execute a shell command on a remote server. Supports session mode (sessionId) or direct mode (host/password).",
+      description: "Execute a shell command on a remote server. Supports session mode (sessionId) or direct mode (host/password). Timeout auto-convert to background is only resumable in session mode.",
       inputSchema: {
         type: "object",
         properties: {
@@ -186,15 +192,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_exec_bg",
-      description: "Run a command in background on the remote server (non-blocking). Returns a runId to check/stop later.",
+      description: "Run a command in background on the remote server (non-blocking). Session mode only. Returns a runId to check/stop later.",
       inputSchema: {
         type: "object",
         properties: {
           sessionId: { type: "string", description: "Session ID from ssh_connect (required for bg)" },
-          ...authFields,
           command: { type: "string", description: "Shell command to execute in background" },
           cwd: { type: "string", description: "Working directory" },
           sudo: { type: "boolean", description: "Execute with sudo", default: false },
+          timeout: { type: "number", description: "Startup timeout in milliseconds (default: 30000)", default: 30000 },
         },
         required: ["sessionId", "command"],
       },
@@ -204,13 +210,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Stop a background process by runId or PID on the remote server.",
       inputSchema: {
         type: "object",
+        oneOf: [
+          { required: ["sessionId", "runId"] },
+          { required: ["sessionId", "pid"] },
+        ],
         properties: {
           sessionId: { type: "string", description: "Session ID" },
           runId: { type: "string", description: "Run ID from ssh_exec_bg (alternative to pid)" },
           pid: { type: "number", description: "Process PID to kill (alternative to runId)" },
           force: { type: "boolean", description: "Use kill -9 instead of kill -TERM", default: false },
         },
-        required: ["sessionId"],
       },
     },
     {
@@ -270,7 +279,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_file_delete",
-      description: "Delete a file or directory on a remote server via SFTP.",
+      description: "Delete a file on a remote server via SFTP, or delete a directory recursively when recursive=true.",
       inputSchema: {
         type: "object",
         properties: {
@@ -435,7 +444,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_shell_close",
-      description: "Close an interactive shell session. Flushes remaining buffer then terminates.",
+      description: "Close an interactive shell session.",
       inputSchema: {
         type: "object",
         properties: {
@@ -489,6 +498,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           sessionId: { type: "string", description: "Session ID" },
           ...authFields,
+          ...k8sConfigFields,
           namespace: { type: "string", description: "Optional specific namespace (lists all namespaces if omitted)" }
         }
       }
@@ -501,6 +511,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           sessionId: { type: "string", description: "Session ID" },
           ...authFields,
+          ...k8sConfigFields,
           namespace: { type: "string", description: "Kubernetes namespace" },
           pod: { type: "string", description: "Pod name" },
           container: { type: "string", description: "Optional container name (defaults to first container)" },
@@ -517,6 +528,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           sessionId: { type: "string", description: "Session ID" },
           ...authFields,
+          ...k8sConfigFields,
           namespace: { type: "string", description: "Kubernetes namespace" },
           pod: { type: "string", description: "Pod name" },
           container: { type: "string", description: "Optional container name" },
@@ -533,6 +545,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           sessionId: { type: "string", description: "Session ID" },
           ...authFields,
+          ...k8sConfigFields,
           namespace: { type: "string", description: "Kubernetes namespace" },
           pod: { type: "string", description: "Pod name" },
           container: { type: "string", description: "Optional container name" },
@@ -551,6 +564,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           sessionId: { type: "string", description: "Session ID" },
           ...authFields,
+          ...k8sConfigFields,
           namespace: { type: "string", description: "Kubernetes namespace (omit if running on host)" },
           pod: { type: "string", description: "Pod name (omit if running on host)" },
           container: { type: "string", description: "Optional container name" },

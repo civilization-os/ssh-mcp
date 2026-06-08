@@ -144,12 +144,13 @@ function escapeArg(v: string): string {
 }
 
 export async function handleExec(args: SshExecArgs) {
+  const timeoutMs = args.timeout ?? 600000;
   const result = await resolveClient(args, (client) => {
     // Tag the client so execOnClient can find sessionId for bg registration
     if (args.sessionId) {
       (client as unknown as { __sessionId?: string }).__sessionId = args.sessionId;
     }
-    return execOnClient(client, args.command, args.timeout ?? 600000, args.cwd, args.env, args.sudo);
+    return execOnClient(client, args.command, timeoutMs, args.cwd, args.env, args.sudo);
   }) as {
     stdout: string; stderr: string; exitCode: number | null;
     timedOut?: boolean; partial?: boolean; runId?: string; pid?: number;
@@ -158,22 +159,23 @@ export async function handleExec(args: SshExecArgs) {
   const contents: { type: string; text: string }[] = [];
 
   if (result.timedOut) {
-    contents.push({
-      type: "text",
-      text: [
-        `Command is still running (timeout after ${args.timeout ?? 600000}ms). Partial output:`,
-        ``,
-        result.stdout || "(no output yet)",
-        ...(result.stderr ? [`\nSTDERR:\n${result.stderr}`] : []),
-        ``,
-        result.runId
-          ? `Use ssh_exec_bg_result sessionId="${args.sessionId}" runId="${result.runId}" to check output`
-          : "",
-        result.pid
-          ? `Use ssh_exec_stop sessionId="${args.sessionId}" pid=${result.pid} to stop`
-          : "",
-      ].filter(Boolean).join("\n"),
-    });
+    const timedOutLines = [
+      `Command is still running (timeout after ${timeoutMs}ms). Partial output:`,
+      ``,
+      result.stdout || "(no output yet)",
+      ...(result.stderr ? [`\nSTDERR:\n${result.stderr}`] : []),
+      ``,
+    ];
+    if (args.sessionId && result.runId) {
+      timedOutLines.push(`Use ssh_exec_bg_result sessionId="${args.sessionId}" runId="${result.runId}" to check output`);
+    }
+    if (args.sessionId && result.pid) {
+      timedOutLines.push(`Use ssh_exec_stop sessionId="${args.sessionId}" pid=${result.pid} to stop`);
+    }
+    if (!args.sessionId) {
+      timedOutLines.push("Background follow-up is only available in session mode. Re-run with ssh_connect + sessionId if you need resumable long-running commands.");
+    }
+    contents.push({ type: "text", text: timedOutLines.join("\n") });
   } else {
     contents.push({ type: "text", text: result.stdout || "(no output)" });
     if (result.stderr) {
@@ -228,7 +230,7 @@ export async function handleExecBg(args: SshExecBgArgs): Promise<{ content: { ty
   const runId = generateRunId();
   const outFile = `/tmp/.mcp_bg_${runId}.out`;
   const pidFile = `/tmp/.mcp_bg_${runId}.pid`;
-  const timeout = args.timeout ?? 6000000; // 5min default for bg
+  const timeout = args.timeout ?? 30000;
 
   return new Promise((resolve) => {
     let cmd = args.command;

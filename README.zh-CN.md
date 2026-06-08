@@ -21,8 +21,8 @@
 | 分类 | 工具 | 功能说明 |
 |------|------|----------|
 | **会话管理** | `ssh_connect`, `ssh_disconnect`, `ssh_sessions` | 持久化连接池，30 分钟空闲自动清理 |
-| **命令执行** | `ssh_exec`, `ssh_script`, `ssh_exec_bg`, `ssh_exec_stop`, `ssh_exec_bg_result` | 运行命令，支持 cwd/env/sudo。智能超时自动转后台 |
-| **文件操作** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | 完整 SFTP 功能：读写、上传、删除（递归）、重命名、创建目录（-p）、改权限、查看详情 |
+| **命令执行** | `ssh_exec`, `ssh_script`, `ssh_exec_bg`, `ssh_exec_stop`, `ssh_exec_bg_result` | 运行命令，支持 cwd/env/sudo。会话模式下智能超时可自动转后台 |
+| **文件操作** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | 完整 SFTP 功能：读写、上传、递归删除目录、重命名、创建目录（-p）、改权限、查看详情 |
 | **系统监控** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | 系统信息、进程列表（按 CPU/内存排序）、磁盘使用 |
 | **日志查看** | `ssh_log_tail`, `ssh_log_search` | 查看日志尾部、grep 搜索（支持上下文行数） |
 
@@ -47,7 +47,7 @@ npm run build
 **会话模式**（推荐 — 复用连接）：
 
 ```
-ssh_connect    host="192.168.1.1"  username="root"  password="xxx"
+ssh_connect    host="192.168.1.1"  username="root"  password="xxx"  kubectlPath="/usr/local/bin/kubectl"  kubeconfig="/root/.kube/config"
 → 会话已创建: sess_xxx
 
 ssh_exec       sessionId="sess_xxx"  command="top -b -n 1 | head -5"
@@ -62,12 +62,21 @@ ssh_disconnect sessionId="sess_xxx"
 ssh_exec  host="192.168.1.1"  username="root"  password="xxx"  command="whoami"
 ```
 
+对于 Kubernetes 相关工具，`ssh_connect` 还支持以下可选参数：
+
+- `kubectlPath`：远端主机上的自定义 `kubectl` 可执行文件路径
+- `kubeconfig`：远端主机上的自定义 kubeconfig 文件路径
+
+如果不传，服务端会在远端自动探测这两个配置。
+
 #### 智能超时
 
-所有 `ssh_exec` 命令自动通过 `nohup` 包装运行。如果命令超过超时时间（默认 10 分钟），不会报错退出，而是自动转为后台任务，返回 `runId`：
+所有 `ssh_exec` 命令自动通过 `nohup` 包装运行。在会话模式下，如果命令超过超时时间（默认 10 分钟），不会报错退出，而是自动转为后台任务，返回 `runId`：
 
 - 查看输出：`ssh_exec_bg_result sessionId="..." runId="bg_xxx"`
 - 停止任务：`ssh_exec_stop sessionId="..." runId="bg_xxx"`
+
+在直连模式下，超时后的远端进程仍可能继续运行，但不会提供可恢复查询的 `runId`。如果需要管理长时间运行任务，建议先 `ssh_connect` 再执行。
 
 ### 各客户端 MCP 配置
 

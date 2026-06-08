@@ -243,6 +243,8 @@ export function extractCredentials(args: Record<string, unknown>): Partial<SshCr
     privateKey: str(args.privateKey),
     passphrase: str(args.passphrase),
     timeout: num(args.timeout),
+    kubectlPath: str(args.kubectlPath),
+    kubeconfig: str(args.kubeconfig),
   };
 }
 
@@ -353,19 +355,19 @@ export function validateSshShellCloseArgs(args: unknown): args is SshShellCloseA
 // ======== Kubernetes Validators ========
 
 export interface SshK8sArthasAttachArgs {
-  sessionId: string;
+  sessionId?: string;
   command: string;
   namespace?: string;
   pod?: string;
   container?: string;
-  pid?: string;
+  pid?: number;
   arthasVersion?: string;
   jdkVersion?: string;
   timeout?: number;
 }
 
 export function validateSshK8sArthasAttachArgs(args: unknown): args is SshK8sArthasAttachArgs {
-  return isRecord(args) && typeof args.command === "string" && typeof args.sessionId === "string";
+  return isRecord(args) && typeof args.command === "string";
 }
 
 export function validateSshK8sPodLogsArgs(args: unknown): boolean {
@@ -388,4 +390,3 @@ export function validateSshK8sPodCpArgs(args: unknown): boolean {
 export function validateSshK8sListPodsArgs(args: unknown): boolean {
   return isRecord(args);
 }
-

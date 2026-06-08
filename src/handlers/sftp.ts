@@ -103,49 +103,45 @@ export async function handleListDir(args: SshFileListArgs) {
 export async function handleDelete(args: SshFileDeleteArgs) {
   await resolveClient(args, (client) =>
     withSftp(client, args.timeout ?? 30000, (sftp) => {
+      if (args.recursive) {
+        return sftpDeleteRecursive(sftp, args.path);
+      }
       return new Promise<void>((resolve, reject) => {
-        if (args.recursive) {
-          sftp.stat(args.path, (statErr, stat) => {
-            if (statErr) { reject(statErr); return; }
-            if (stat.isDirectory()) {
-              sftp.readdir(args.path, (readErr, list) => {
-                if (readErr) { reject(readErr); return; }
-                let pending = list.length;
-                if (pending === 0) {
-                  sftp.rmdir(args.path, (rmErr) => rmErr ? reject(rmErr) : resolve());
-                  return;
-                }
-                for (const item of list) {
-                  const childPath = `${args.path}/${item.filename}`;
-                  if (item.attrs.isDirectory()) {
-                    // Recursively delete subdirectory
-                    sftp.readdir(childPath, () => {
-                      // We can't easily recurse via SFTP callbacks, use exec fallback
-                      sftp.end();
-                      resolve(undefined as unknown as void);
-                    });
-                  } else {
-                    sftp.unlink(childPath, () => {
-                      pending--;
-                      if (pending <= 0) {
-                        sftp.rmdir(args.path, (rmErr) => rmErr ? reject(rmErr) : resolve());
-                      }
-                    });
-                  }
-                }
-              });
-            } else {
-              sftp.unlink(args.path, (err) => err ? reject(err) : resolve());
-            }
-          });
-        } else {
-          sftp.unlink(args.path, (err) => err ? reject(err) : resolve());
-        }
+        sftp.unlink(args.path, (err) => err ? reject(err) : resolve());
       });
     })
   );
 
   return { content: [{ type: "text" as const, text: `Deleted: ${args.path}` }] };
+}
+
+function sftpDeleteRecursive(sftp: import("ssh2").SFTPWrapper, targetPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    sftp.stat(targetPath, (statErr, stat) => {
+      if (statErr) {
+        reject(statErr);
+        return;
+      }
+      if (!stat.isDirectory()) {
+        sftp.unlink(targetPath, (unlinkErr) => unlinkErr ? reject(unlinkErr) : resolve());
+        return;
+      }
+      sftp.readdir(targetPath, async (readErr, list) => {
+        if (readErr) {
+          reject(readErr);
+          return;
+        }
+        try {
+          for (const item of list) {
+            await sftpDeleteRecursive(sftp, `${targetPath}/${item.filename}`);
+          }
+          sftp.rmdir(targetPath, (rmErr) => rmErr ? reject(rmErr) : resolve());
+        } catch (err) {
+          reject(err as Error);
+        }
+      });
+    });
+  });
 }
 
 // --- Rename ---

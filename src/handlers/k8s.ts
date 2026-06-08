@@ -208,7 +208,7 @@ export async function handleK8sPodCp(args: any): Promise<ToolResult> {
 
 export async function handleK8sArthasAttach(args: SshK8sArthasAttachArgs): Promise<ToolResult> {
   const { command, namespace, pod, container, pid, arthasVersion, jdkVersion } = args;
-  const session = getSession(args.sessionId);
+  const session = args.sessionId ? getSession(args.sessionId) : undefined;
 
   // Built-in Assets Strategy (Offline)
   // 1. Check local assets/ directory for arthas-boot.jar and optional JDK

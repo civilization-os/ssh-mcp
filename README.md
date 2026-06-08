@@ -21,8 +21,8 @@
 | Category | Tools | Description |
 |----------|-------|-------------|
 | **Session** | `ssh_connect`, `ssh_disconnect`, `ssh_sessions` | Persistent connection pool with 30-min idle auto-cleanup |
-| **Execution** | `ssh_exec`, `ssh_script`, `ssh_exec_bg`, `ssh_exec_stop`, `ssh_exec_bg_result` | Run commands with smart timeout (auto-converts to background on timeout). Supports cwd, env, sudo |
-| **SFTP** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Full file operations with recursive delete/chmod, mkdir -p support |
+| **Execution** | `ssh_exec`, `ssh_script`, `ssh_exec_bg`, `ssh_exec_stop`, `ssh_exec_bg_result` | Run commands with smart timeout. Session mode can auto-convert long-running commands to background. Supports cwd, env, sudo |
+| **SFTP** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Full file operations with recursive directory delete/chmod, mkdir -p support |
 | **Monitoring** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | OS info, process list (sorted by CPU/memory), disk usage |
 | **Logs** | `ssh_log_tail`, `ssh_log_search` | View log tails, grep with context |
 
@@ -47,7 +47,7 @@ npm run build
 **Session mode** (recommended — reuse connection):
 
 ```
-ssh_connect  host="192.168.1.1"  username="root"  password="xxx"
+ssh_connect  host="192.168.1.1"  username="root"  password="xxx"  kubectlPath="/usr/local/bin/kubectl"  kubeconfig="/root/.kube/config"
 → Session created: sess_xxx
 
 ssh_exec     sessionId="sess_xxx"  command="top -b -n 1 | head -5"
@@ -62,12 +62,21 @@ ssh_disconnect sessionId="sess_xxx"
 ssh_exec  host="192.168.1.1"  username="root"  password="xxx"  command="whoami"
 ```
 
+For Kubernetes-related tools, `ssh_connect` also accepts these optional fields:
+
+- `kubectlPath`: custom `kubectl` binary path on the remote host
+- `kubeconfig`: custom kubeconfig path on the remote host
+
+If omitted, the server will try to auto-detect both on the remote host.
+
 #### Smart Timeout
 
-All `ssh_exec` commands automatically wrap with `nohup`. If a command exceeds the timeout (default 10 min), it converts to a background task and returns a `runId` so you can:
+All `ssh_exec` commands automatically wrap with `nohup`. In session mode, if a command exceeds the timeout (default 10 min), it converts to a background task and returns a `runId` so you can:
 
 - Check output: `ssh_exec_bg_result sessionId="..." runId="bg_xxx"`
 - Stop it: `ssh_exec_stop sessionId="..." runId="bg_xxx"`
+
+In direct mode, timed-out commands still keep running remotely, but resumable follow-up via `runId` is not available. Use `ssh_connect` first if you need to manage long-running tasks.
 
 ### MCP Configuration by Client
 
