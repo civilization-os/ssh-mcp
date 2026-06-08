@@ -40,7 +40,18 @@ export const translations = {
     backBtn: "返回上级",
     // Connection creation
     connectNewSession: "新建 SSH 连接",
+    editSession: "编辑 SSH 连接",
+    saveSession: "保存会话",
     sessionName: "会话名称",
+    sessionDetails: "会话详情",
+    hostPort: "主机与端口",
+    authStatus: "认证方式",
+    sessionOptional: "可选配置",
+    autoDetect: "自动探测",
+    keepCurrentSecret: "留空则保留当前凭据",
+    updateFailed: "更新失败",
+    authPasswordSaved: "密码认证",
+    authPrivateKeySaved: "私钥认证",
     host: "主机地址 (Host)",
     port: "端口 (Port)",
     username: "用户名 (Username)",
@@ -120,7 +131,18 @@ export const translations = {
     backBtn: "Back",
     // Connection creation
     connectNewSession: "New SSH Connection",
+    editSession: "Edit SSH Connection",
+    saveSession: "Save Session",
     sessionName: "Session Name",
+    sessionDetails: "Session Details",
+    hostPort: "Host & Port",
+    authStatus: "Authentication",
+    sessionOptional: "Optional Config",
+    autoDetect: "Auto-detect",
+    keepCurrentSecret: "Leave blank to keep the current credential",
+    updateFailed: "Update failed",
+    authPasswordSaved: "Password",
+    authPrivateKeySaved: "Private key",
     host: "Host",
     port: "Port",
     username: "Username",
@@ -163,4 +185,3 @@ export const translations = {
 
 
 export type Language = "zh" | "en";
-

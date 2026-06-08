@@ -10,6 +10,13 @@ interface SshSession {
   host: string;
   port: number;
   username: string;
+  createdAt?: number;
+  lastUsedAt?: number;
+  kubectlPath?: string;
+  kubeconfig?: string;
+  authType?: "password" | "privateKey";
+  hasPassword?: boolean;
+  hasPrivateKey?: boolean;
 }
 
 interface ShellSession {
@@ -41,6 +48,8 @@ export default function App() {
   
   // Modal & Form States
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string>("");
+  const [initialAuthMethod, setInitialAuthMethod] = useState<"password" | "privateKey">("password");
   const [sessionNameInput, setSessionNameInput] = useState("");
   const [hostInput, setHostInput] = useState("");
   const [portInput, setPortInput] = useState("22");
@@ -62,6 +71,42 @@ export default function App() {
   
   const t = (key: keyof typeof translations["en"]): string => {
     return translations[lang][key] || translations["en"][key] || "";
+  };
+
+  const resetSessionForm = () => {
+    setEditingSessionId("");
+    setInitialAuthMethod("password");
+    setSessionNameInput("");
+    setHostInput("");
+    setPortInput("22");
+    setUsernameInput("root");
+    setAuthMethodInput("password");
+    setPasswordInput("");
+    setPrivateKeyInput("");
+    setKubectlPathInput("");
+    setKubeconfigInput("");
+    setConnectError("");
+  };
+
+  const openCreateModal = () => {
+    resetSessionForm();
+    setShowCreateModal(true);
+  };
+
+  const openEditModal = (session: SshSession) => {
+    setEditingSessionId(session.id);
+    setInitialAuthMethod(session.authType === "privateKey" ? "privateKey" : "password");
+    setSessionNameInput(session.label);
+    setHostInput(session.host);
+    setPortInput(String(session.port));
+    setUsernameInput(session.username);
+    setAuthMethodInput(session.authType === "privateKey" ? "privateKey" : "password");
+    setPasswordInput("");
+    setPrivateKeyInput("");
+    setKubectlPathInput(session.kubectlPath ?? "");
+    setKubeconfigInput(session.kubeconfig ?? "");
+    setConnectError("");
+    setShowCreateModal(true);
   };
 
   // Polling for sessions and shells
@@ -115,6 +160,7 @@ export default function App() {
     setConnectLoading(true);
     setConnectError("");
     try {
+      const isEditing = Boolean(editingSessionId);
       const payload: any = {
         name: sessionNameInput || `${usernameInput}@${hostInput}:${portInput}`,
         host: hostInput,
@@ -124,13 +170,26 @@ export default function App() {
         kubeconfig: kubeconfigInput,
       };
       if (authMethodInput === "password") {
-        payload.password = passwordInput;
+        if (!isEditing || authMethodInput !== initialAuthMethod || passwordInput) {
+          payload.password = passwordInput;
+        }
       } else {
-        payload.privateKey = privateKeyInput;
+        if (!isEditing || authMethodInput !== initialAuthMethod || privateKeyInput) {
+          payload.privateKey = privateKeyInput;
+        }
       }
 
-      const res = await fetch(`${API_BASE}/api/sessions`, {
-        method: "POST",
+      if (isEditing && authMethodInput !== initialAuthMethod) {
+        const switchedWithoutSecret = authMethodInput === "password" ? !passwordInput : !privateKeyInput;
+        if (switchedWithoutSecret) {
+          throw new Error(t("keepCurrentSecret"));
+        }
+      }
+
+      const res = await fetch(
+        isEditing ? `${API_BASE}/api/sessions/${editingSessionId}` : `${API_BASE}/api/sessions`,
+        {
+        method: isEditing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -142,13 +201,7 @@ export default function App() {
 
       const data = await res.json();
       setShowCreateModal(false);
-      setSessionNameInput("");
-      setHostInput("");
-      setPortInput("22");
-      setPasswordInput("");
-      setPrivateKeyInput("");
-      setKubectlPathInput("");
-      setKubeconfigInput("");
+      resetSessionForm();
       setSelectedSessionId(data.id);
     } catch (err: any) {
       console.error(err);
@@ -313,7 +366,7 @@ export default function App() {
               {t("sessionsTitle")} ({sessions.length})
             </div>
             <button
-              onClick={() => setShowCreateModal(true)}
+              onClick={openCreateModal}
               style={{
                 background: "rgba(0, 242, 254, 0.1)",
                 border: "1px solid rgba(0, 242, 254, 0.3)",
@@ -360,8 +413,35 @@ export default function App() {
                   {sess.label}
                 </div>
                 <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
-                  {sess.username}@{sess.host}
+                  {sess.username}@{sess.host}:{sess.port}
                 </div>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px", paddingRight: "48px" }}>
+                  <span style={sessionBadgeStyle}>{sess.authType === "privateKey" ? t("authPrivateKeySaved") : t("authPasswordSaved")}</span>
+                  {sess.kubectlPath && <span style={sessionBadgeStyle}>kubectl</span>}
+                  {sess.kubeconfig && <span style={sessionBadgeStyle}>kubeconfig</span>}
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); openEditModal(sess); }}
+                  title={t("editSession")}
+                  style={{
+                    position: "absolute",
+                    top: "8px",
+                    right: "30px",
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--text-secondary)",
+                    cursor: "pointer",
+                    fontSize: "13px",
+                    lineHeight: 1,
+                    padding: "2px 4px",
+                    borderRadius: "4px",
+                    transition: "color 0.2s ease"
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--accent-blue)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
+                >
+                  ✎
+                </button>
                 {/* Delete session button */}
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDeleteSession(sess.id); }}
@@ -481,7 +561,7 @@ export default function App() {
               </p>
               <button
                 className="glow-btn"
-                onClick={() => setShowCreateModal(true)}
+                onClick={openCreateModal}
                 style={{ padding: "10px 24px", borderRadius: "6px", color: "#000" }}
               >
                 {t("connectNewSession")}
@@ -490,6 +570,11 @@ export default function App() {
           </div>
         ) : (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+            <SelectedSessionView
+              session={sessions.find((s) => s.id === selectedSessionId) ?? null}
+              lang={lang}
+              onEdit={openEditModal}
+            />
             {activeTab === "terminal" && (
               activeShellId ? (
                 <XtermView shellId={activeShellId} key={activeShellId} lang={lang} />
@@ -638,7 +723,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Create Connection Modal */}
+      {/* Create / Edit Connection Modal */}
       {showCreateModal && (
         <div style={{
           position: "fixed",
@@ -663,7 +748,7 @@ export default function App() {
             boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
           }}>
             <h3 style={{ fontSize: "18px", fontWeight: 700, margin: 0, color: "var(--accent-blue)" }}>
-              {t("connectNewSession")}
+              {editingSessionId ? t("editSession") : t("connectNewSession")}
             </h3>
 
             {connectError && (
@@ -682,9 +767,9 @@ export default function App() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("sessionName")}</label>
-              <input
-                type="text"
-                placeholder="e.g. Production Web Server"
+                <input
+                  type="text"
+                  placeholder="e.g. Production Web Server"
                 value={sessionNameInput}
                 onChange={e => setSessionNameInput(e.target.value)}
                 style={{
@@ -784,7 +869,7 @@ export default function App() {
                 <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("password")} *</label>
                 <input
                   type="password"
-                  required
+                  required={!editingSessionId || authMethodInput !== initialAuthMethod}
                   placeholder="••••••••"
                   value={passwordInput}
                   onChange={e => setPasswordInput(e.target.value)}
@@ -797,12 +882,15 @@ export default function App() {
                     fontSize: "14px",
                   }}
                 />
+                {editingSessionId && authMethodInput === initialAuthMethod && (
+                  <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("keepCurrentSecret")}</div>
+                )}
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                 <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("privateKey")} *</label>
                 <textarea
-                  required
+                  required={!editingSessionId || authMethodInput !== initialAuthMethod}
                   rows={5}
                   placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                   value={privateKeyInput}
@@ -818,6 +906,9 @@ export default function App() {
                     resize: "none",
                   }}
                 />
+                {editingSessionId && authMethodInput === initialAuthMethod && (
+                  <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("keepCurrentSecret")}</div>
+                )}
               </div>
             )}
 
@@ -860,7 +951,7 @@ export default function App() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "12px" }}>
               <button
                 type="button"
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => { setShowCreateModal(false); resetSessionForm(); }}
                 style={{
                   background: "transparent",
                   border: "1px solid var(--panel-border)",
@@ -886,12 +977,79 @@ export default function App() {
                   color: "#000",
                 }}
               >
-                {connectLoading ? t("connecting") : t("connectBtn")}
+                {connectLoading ? t("connecting") : editingSessionId ? t("saveSession") : t("connectBtn")}
               </button>
             </div>
           </form>
         </div>
       )}
+    </div>
+  );
+}
+
+const sessionBadgeStyle: React.CSSProperties = {
+  fontSize: "10px",
+  color: "var(--text-secondary)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  background: "rgba(255,255,255,0.03)",
+  borderRadius: "999px",
+  padding: "2px 8px",
+};
+
+interface SelectedSessionViewProps {
+  session: SshSession | null;
+  lang: Language;
+  onEdit: (session: SshSession) => void;
+}
+
+function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps) {
+  const t = (key: keyof typeof translations["en"]): string => {
+    return translations[lang][key] || translations["en"][key] || "";
+  };
+
+  if (!session) return null;
+
+  const authLabel = session.authType === "privateKey" ? t("authPrivateKeySaved") : t("authPasswordSaved");
+
+  return (
+    <div className="glass-panel" style={{ margin: "12px 12px 0", padding: "14px 16px", borderRadius: "14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" }}>
+        <div>
+          <div style={{ fontSize: "11px", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "6px" }}>
+            {t("sessionDetails")}
+          </div>
+          <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>{session.label}</div>
+        </div>
+        <button
+          onClick={() => onEdit(session)}
+          style={{
+            background: "rgba(0, 242, 254, 0.08)",
+            border: "1px solid rgba(0, 242, 254, 0.25)",
+            color: "var(--accent-blue)",
+            borderRadius: "8px",
+            padding: "6px 10px",
+            fontSize: "12px",
+            cursor: "pointer",
+          }}
+        >
+          {t("editSession")}
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginTop: "14px" }}>
+        <SessionInfoBlock label={t("hostPort")} value={`${session.username}@${session.host}:${session.port}`} />
+        <SessionInfoBlock label={t("authStatus")} value={authLabel} />
+        <SessionInfoBlock label="kubectl" value={session.kubectlPath || t("autoDetect")} />
+        <SessionInfoBlock label="kubeconfig" value={session.kubeconfig || t("autoDetect")} />
+      </div>
+    </div>
+  );
+}
+
+function SessionInfoBlock({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "10px", padding: "10px 12px" }}>
+      <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginBottom: "6px" }}>{label}</div>
+      <div style={{ fontSize: "13px", color: "var(--text-primary)", wordBreak: "break-all" }}>{value}</div>
     </div>
   );
 }

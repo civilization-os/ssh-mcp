@@ -18,7 +18,7 @@ export function startHttpServer(initialPort: number = 12222) {
     // (I will keep the existing handler code inside this block)
     // Add CORS headers for Vite/frontend development
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (req.method === "OPTIONS") {
@@ -62,6 +62,34 @@ export function startHttpServer(initialPort: number = 12222) {
 
     // DELETE /api/sessions/:sessionId
     const sessionDeleteMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)$/);
+    const sessionUpdateMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)$/);
+    if (sessionUpdateMatch && req.method === "PUT") {
+      const sessionId = sessionUpdateMatch[1];
+      let body = "";
+      req.on("data", chunk => { body += chunk; });
+      req.on("end", async () => {
+        try {
+          const creds = JSON.parse(body);
+          const { updateSession } = await import("./session.js");
+          const session = await updateSession(sessionId, creds, creds.name);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            id: session.id,
+            label: session.label,
+            host: session.host,
+            port: session.port,
+            username: session.username,
+            kubectlPath: session.kubectlPath,
+            kubeconfig: session.kubeconfig
+          }));
+        } catch (err: any) {
+          res.writeHead(400, { "Content-Type": "text/plain" });
+          res.end(`Error: ${err.message}`);
+        }
+      });
+      return;
+    }
+
     if (sessionDeleteMatch && req.method === "DELETE") {
       const sessionId = sessionDeleteMatch[1];
       try {

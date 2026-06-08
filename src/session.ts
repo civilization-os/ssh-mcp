@@ -29,6 +29,14 @@ interface StoredCredentials {
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function getStoredCredentials(session: Session): StoredCredentials | undefined {
+  return (session as any)._creds as StoredCredentials | undefined;
+}
+
 // ======== 持久化读写 ========
 
 function saveSessionsStore() {
@@ -190,6 +198,54 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
   return session;
 }
 
+export async function updateSession(sessionId: string, creds: Partial<SshCredentials>, label?: string): Promise<Session> {
+  const existing = sessions.get(sessionId);
+  if (!existing) {
+    throw new Error(`Session '${sessionId}' not found`);
+  }
+
+  const stored = getStoredCredentials(existing);
+  if (!stored) {
+    throw new Error(`Session '${sessionId}' credentials are unavailable`);
+  }
+
+  const nextCreds: StoredCredentials = {
+    ...stored,
+    label: normalizeOptionalString(label) ?? stored.label,
+    host: normalizeOptionalString(creds.host) ?? stored.host,
+    port: creds.port ?? stored.port,
+    username: normalizeOptionalString(creds.username) ?? stored.username,
+    passphrase: creds.passphrase !== undefined ? normalizeOptionalString(creds.passphrase) : stored.passphrase,
+    kubectlPath: creds.kubectlPath !== undefined ? normalizeOptionalString(creds.kubectlPath) : stored.kubectlPath,
+    kubeconfig: creds.kubeconfig !== undefined ? normalizeOptionalString(creds.kubeconfig) : stored.kubeconfig,
+  };
+
+  if (creds.password !== undefined) {
+    nextCreds.password = normalizeOptionalString(creds.password);
+    nextCreds.privateKey = undefined;
+  } else if (creds.privateKey !== undefined) {
+    nextCreds.privateKey = normalizeOptionalString(creds.privateKey);
+    nextCreds.password = undefined;
+  }
+
+  const client = await sshConnect(nextCreds, creds.timeout ?? 15000);
+  try { existing.client.end(); } catch { /* ignore */ }
+
+  existing.client = client;
+  existing.label = nextCreds.label;
+  existing.host = nextCreds.host;
+  existing.port = nextCreds.port;
+  existing.username = nextCreds.username;
+  existing.kubectlPath = nextCreds.kubectlPath;
+  existing.kubeconfig = nextCreds.kubeconfig;
+  existing.lastUsedAt = Date.now();
+  (existing as any)._creds = nextCreds;
+
+  sessions.set(sessionId, existing);
+  saveSessionsStore();
+  return existing;
+}
+
 export function getSession(sessionId: string): Session | undefined {
   const session = sessions.get(sessionId);
   if (session) {
@@ -208,8 +264,13 @@ export function disconnectSession(sessionId: string): boolean {
 }
 
 export function listSessions(): Omit<Session, "client">[] {
-  const result: Omit<Session, "client">[] = [];
+  const result: Array<Omit<Session, "client"> & {
+    authType?: "password" | "privateKey";
+    hasPassword?: boolean;
+    hasPrivateKey?: boolean;
+  }> = [];
   for (const session of sessions.values()) {
+    const stored = getStoredCredentials(session);
     result.push({
       id: session.id,
       label: session.label,
@@ -218,6 +279,11 @@ export function listSessions(): Omit<Session, "client">[] {
       username: session.username,
       createdAt: session.createdAt,
       lastUsedAt: session.lastUsedAt,
+      kubectlPath: session.kubectlPath,
+      kubeconfig: session.kubeconfig,
+      authType: stored?.privateKey ? "privateKey" : stored?.password ? "password" : undefined,
+      hasPassword: Boolean(stored?.password),
+      hasPrivateKey: Boolean(stored?.privateKey),
     });
   }
   return result;
