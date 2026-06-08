@@ -8,8 +8,14 @@ import {
   listActiveShells
 } from "./handlers/shell.js";
 
-export function startHttpServer(port: number = 12222) {
+export function startHttpServer(initialPort: number = 12222) {
+  let currentPort = initialPort;
+  const maxRetries = 10;
+  let retryCount = 0;
+
   const server = http.createServer(async (req, res) => {
+    // ... rest of the handler remains the same ...
+    // (I will keep the existing handler code inside this block)
     // Add CORS headers for Vite/frontend development
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
@@ -452,8 +458,20 @@ export function startHttpServer(port: number = 12222) {
     }
   });
 
-  server.listen(port, "127.0.0.1", () => {
-    console.error(`[REST/WebSocket Server] Running at http://127.0.0.1:${port}`);
+  server.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE" && retryCount < maxRetries) {
+      retryCount++;
+      currentPort++;
+      console.error(`[REST Server] Port ${currentPort - 1} in use, retrying on ${currentPort}...`);
+      server.listen(currentPort, "127.0.0.1");
+    } else {
+      console.error(`[REST Server] Failed to start: ${err.message}`);
+      // Don't throw/exit to keep the main MCP stdio channel alive
+    }
+  });
+
+  server.listen(currentPort, "127.0.0.1", () => {
+    console.error(`[REST/WebSocket Server] Running at http://127.0.0.1:${currentPort}`);
   });
 
   return server;

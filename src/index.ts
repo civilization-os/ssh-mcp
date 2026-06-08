@@ -406,14 +406,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_shell_read",
-      description: "Read buffered output from an interactive shell. Optionally waits for output to settle (waitMs) before returning, like waiting for a command to finish.",
+      description: "Read buffered output from an interactive shell. Returns a JSON object with 'content', 'status', and 'promptShown'. Supports 'peek' mode and capped waiting.",
       inputSchema: {
         type: "object",
         properties: {
           shellId: { type: "string", description: "Shell ID from ssh_shell" },
           maxLength: { type: "number", description: "Max bytes to return (default: 50000, reads from end)" },
-          clear: { type: "boolean", description: "Clear buffer after reading (default: true)" },
+          clear: { type: "boolean", description: "Clear buffer after reading (default: false)" },
           waitMs: { type: "number", description: "Wait for N ms of silence before returning (e.g. 500 = wait until output stops)" },
+          maxWaitMs: { type: "number", description: "Maximum total time to wait in ms, even if output is still flowing" },
+          peek: { type: "boolean", description: "Return current buffer immediately without waiting or clearing" },
         },
         required: ["shellId"],
       },
@@ -543,7 +545,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_k8s_arthas_attach",
-      description: "Attach Arthas to a Java process on the host or inside a pod, and execute a command.",
+      description: "Attach Arthas to a Java process on the host or inside a pod, and execute a command. Supports offline mode using local assets if available.",
       inputSchema: {
         type: "object",
         properties: {
@@ -553,7 +555,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           pod: { type: "string", description: "Pod name (omit if running on host)" },
           container: { type: "string", description: "Optional container name" },
           pid: { type: "number", description: "Optional target Java PID (auto-detected if omitted)" },
-          command: { type: "string", description: "Arthas command to run (e.g. 'thread -n 3', 'dashboard -n 1')" }
+          command: { type: "string", description: "Arthas command to run (e.g. 'thread -n 3', 'dashboard -n 1')" },
+          arthasVersion: { type: "string", description: "Specific Arthas version to use (must exist in local assets)" },
+          jdkVersion: { type: "string", description: "Specific JDK version to use for attach (e.g. '8', '11'; must exist in local assets)" },
+          timeout: { type: "number", description: "Command timeout in ms (default: 300000)" },
         },
         required: ["command"]
       }

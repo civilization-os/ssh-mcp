@@ -19,7 +19,7 @@ interface ShellSession {
 
 const shells = new Map<string, ShellSession>();
 let shellIdCounter = 0;
-const MAX_BUFFER_SIZE = 1024 * 1024; // 1MB per shell
+const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB per shell
 
 function generateShellId(): string {
   return `sh_${Date.now()}_${++shellIdCounter}`;
@@ -32,30 +32,34 @@ function appendBuffer(shell: ShellSession, data: string) {
   }
 }
 
-function waitForQuiet(shell: ShellSession, quietMs: number): Promise<void> {
+function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number): Promise<void> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const onData = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(finish, quietMs);
-    };
+    let maxTimer: ReturnType<typeof setTimeout> | null = null;
 
     const finish = () => {
+      if (timer) clearTimeout(timer);
+      if (maxTimer) clearTimeout(maxTimer);
       shell.channel.removeListener("data", onData);
       shell.channel.stderr.removeListener("data", onData);
       shell.channel.removeListener("close", onClose);
       resolve();
     };
 
-    const onClose = () => {
+    const onData = () => {
       if (timer) clearTimeout(timer);
-      shell.channel.removeListener("data", onData);
-      shell.channel.stderr.removeListener("data", onData);
-      resolve();
+      timer = setTimeout(finish, quietMs);
+    };
+
+    const onClose = () => {
+      finish();
     };
 
     timer = setTimeout(finish, quietMs);
+    if (maxWaitMs && maxWaitMs > 0) {
+      maxTimer = setTimeout(finish, maxWaitMs);
+    }
+
     shell.channel.on("data", onData);
     shell.channel.stderr.on("data", onData);
     shell.channel.on("close", onClose);
@@ -227,10 +231,33 @@ export async function handleShellRead(args: SshShellReadArgs) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' not found` }], isError: true };
   }
 
+  // Peek mode: return immediately without waiting or clearing
+  if (args.peek) {
+    const output = shell.buffer;
+    const maxLen = args.maxLength ?? 50000;
+    const text = output.length > maxLen ? output.slice(-maxLen) : output;
+    
+    // Heuristic: check if prompt is likely present (ends with standard prompt chars)
+    const promptShown = /[:\w\s~.-]+[@\w\s~.-]+[#$>]\s*$/.test(text.slice(-50));
+
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({
+          shellId: args.shellId,
+          status: shell.closed ? "CLOSED" : "OPEN",
+          promptShown,
+          bufferSize: output.length,
+          content: text || "(no output)"
+        }, null, 2)
+      }]
+    };
+  }
+
   // Optional: wait for output to settle
   const waitMs = args.waitMs ?? 0;
   if (waitMs > 0 && !shell.closed) {
-    await waitForQuiet(shell, waitMs);
+    await waitForQuiet(shell, waitMs, args.maxWaitMs);
   }
 
   const output = shell.buffer;
@@ -238,19 +265,23 @@ export async function handleShellRead(args: SshShellReadArgs) {
   const truncated = output.length > maxLen;
   const text = truncated ? output.slice(-maxLen) : output;
 
-  if (args.clear ?? true) {
+  if (args.clear ?? false) {
     shell.buffer = "";
   }
 
-  const lines = [
-    `Shell: ${args.shellId}`,
-    `Status: ${shell.closed ? "CLOSED" : "OPEN"}`,
-    `Buffer: ${output.length} bytes${truncated ? ` (showing last ${maxLen})` : ""}`,
-    ``,
-    text || "(no output)",
-  ];
+  // Heuristic for prompt detection
+  const promptShown = /[:\w\s~.-]+[@\w\s~.-]+[#$>]\s*$/.test(text.slice(-50));
 
-  return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  const result = {
+    shellId: args.shellId,
+    status: shell.closed ? "CLOSED" : "OPEN",
+    promptShown,
+    bufferSize: output.length,
+    truncated,
+    content: text || "(no output)"
+  };
+
+  return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
 }
 
 export async function handleShellResize(args: SshShellResizeArgs) {

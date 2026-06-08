@@ -23,6 +23,8 @@ interface StoredCredentials {
   password?: string;
   privateKey?: string;
   passphrase?: string;
+  kubectlPath?: string;
+  kubeconfig?: string;
 }
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -70,6 +72,8 @@ export async function loadAndReconnectSessions(): Promise<void> {
         username: cred.username,
         createdAt: Date.now(),
         lastUsedAt: Date.now(),
+        kubectlPath: cred.kubectlPath,
+        kubeconfig: cred.kubeconfig,
       };
       (session as any)._creds = cred;
       sessions.set(session.id, session);
@@ -161,6 +165,8 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
     username: creds.username ?? "root",
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
+    kubectlPath: creds.kubectlPath,
+    kubeconfig: creds.kubeconfig,
   };
 
   // 存储凭据供持久化使用
@@ -173,6 +179,8 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
     password: creds.password,
     privateKey: creds.privateKey ? String(creds.privateKey) : undefined,
     passphrase: creds.passphrase,
+    kubectlPath: creds.kubectlPath,
+    kubeconfig: creds.kubeconfig,
   };
   (session as any)._creds = storedCred;
 

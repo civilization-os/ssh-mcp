@@ -48,6 +48,8 @@ export default function App() {
   const [authMethodInput, setAuthMethodInput] = useState<"password" | "privateKey">("password");
   const [passwordInput, setPasswordInput] = useState("");
   const [privateKeyInput, setPrivateKeyInput] = useState("");
+  const [kubectlPathInput, setKubectlPathInput] = useState("");
+  const [kubeconfigInput, setKubeconfigInput] = useState("");
   const [connectLoading, setConnectLoading] = useState(false);
   const [connectError, setConnectError] = useState("");
 
@@ -118,6 +120,8 @@ export default function App() {
         host: hostInput,
         port: parseInt(portInput, 10) || 22,
         username: usernameInput,
+        kubectlPath: kubectlPathInput,
+        kubeconfig: kubeconfigInput,
       };
       if (authMethodInput === "password") {
         payload.password = passwordInput;
@@ -143,6 +147,8 @@ export default function App() {
       setPortInput("22");
       setPasswordInput("");
       setPrivateKeyInput("");
+      setKubectlPathInput("");
+      setKubeconfigInput("");
       setSelectedSessionId(data.id);
     } catch (err: any) {
       console.error(err);
@@ -815,6 +821,42 @@ export default function App() {
               </div>
             )}
 
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("kubectlPath")} <span style={{ color: "var(--accent-blue)" }}>(Optional)</span></label>
+              <input
+                type="text"
+                placeholder={t("kubectlPathPlaceholder")}
+                value={kubectlPathInput}
+                onChange={e => setKubectlPathInput(e.target.value)}
+                style={{
+                  background: "rgba(0,0,0,0.3)",
+                  border: "1px solid var(--panel-border)",
+                  borderRadius: "6px",
+                  padding: "8px 12px",
+                  color: "var(--text-primary)",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("kubeconfigPath")} <span style={{ color: "var(--accent-blue)" }}>(Optional)</span></label>
+              <input
+                type="text"
+                placeholder={t("kubeconfigPathPlaceholder")}
+                value={kubeconfigInput}
+                onChange={e => setKubeconfigInput(e.target.value)}
+                style={{
+                  background: "rgba(0,0,0,0.3)",
+                  border: "1px solid var(--panel-border)",
+                  borderRadius: "6px",
+                  padding: "8px 12px",
+                  color: "var(--text-primary)",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "12px" }}>
               <button
                 type="button"
@@ -878,6 +920,7 @@ function XtermView({ shellId, lang }: XtermViewProps) {
       cursorBlink: true,
       fontSize: 14,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      scrollback: 50000,
       theme: {
         background: "#000000",
         foreground: "#f3f4f6",
@@ -1402,6 +1445,8 @@ function K8sView({ sessionId, lang }: K8sViewProps) {
   const [arthasCmd, setArthasCmd] = useState("thread -n 3");
   const [arthasOutput, setArthasOutput] = useState("");
   const [arthasLoading, setArthasLoading] = useState(false);
+  const [arthasVersion, setArthasVersion] = useState("");
+  const [jdkVersion, setJdkVersion] = useState("");
 
   const t = (key: keyof typeof translations["en"]): string => {
     return translations[lang][key] || translations["en"][key] || "";
@@ -1472,7 +1517,9 @@ function K8sView({ sessionId, lang }: K8sViewProps) {
         body: JSON.stringify({
           namespace: selectedPodForArthas.namespace,
           pod: selectedPodForArthas.name,
-          command: arthasCmd
+          command: arthasCmd,
+          arthasVersion,
+          jdkVersion
         })
       });
       const data = await res.json();
@@ -1650,6 +1697,38 @@ function K8sView({ sessionId, lang }: K8sViewProps) {
                   >
                     {t("arthasRunBtn")}
                   </button>
+                </div>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <input
+                    type="text"
+                    value={arthasVersion}
+                    onChange={(e) => setArthasVersion(e.target.value)}
+                    placeholder={t("arthasVersionPlaceholder")}
+                    style={{
+                      flex: 1,
+                      background: "rgba(255,255,255,0.05)",
+                      border: "1px solid var(--panel-border)",
+                      color: "var(--text-primary)",
+                      borderRadius: "6px",
+                      padding: "6px 10px",
+                      fontSize: "12px"
+                    }}
+                  />
+                  <input
+                    type="text"
+                    value={jdkVersion}
+                    onChange={(e) => setJdkVersion(e.target.value)}
+                    placeholder={t("jdkVersionPlaceholder")}
+                    style={{
+                      flex: 1,
+                      background: "rgba(255,255,255,0.05)",
+                      border: "1px solid var(--panel-border)",
+                      color: "var(--text-primary)",
+                      borderRadius: "6px",
+                      padding: "6px 10px",
+                      fontSize: "12px"
+                    }}
+                  />
                 </div>
                 {/* Console Output box */}
                 <div style={{ flex: 1, background: "#000", borderRadius: "6px", padding: "12px", fontFamily: "monospace", fontSize: "12px", overflowY: "auto", whiteSpace: "pre-wrap", color: "var(--accent-neon)" }}>

@@ -10,6 +10,9 @@ export interface SshCredentials {
   privateKey?: string;
   passphrase?: string;
   timeout?: number;
+  // K8s specific config for the jump host
+  kubectlPath?: string;
+  kubeconfig?: string; // Path on the remote host
 }
 
 // --- Session ---
@@ -23,6 +26,9 @@ export interface Session {
   username: string;
   createdAt: number;
   lastUsedAt: number;
+  // K8s specific config
+  kubectlPath?: string;
+  kubeconfig?: string;
 }
 
 // --- Tool argument types ---
@@ -196,6 +202,8 @@ export interface SshShellReadArgs {
   maxLength?: number;
   clear?: boolean;
   waitMs?: number;
+  maxWaitMs?: number;
+  peek?: boolean;
 }
 
 export interface SshShellResizeArgs {
@@ -344,8 +352,20 @@ export function validateSshShellCloseArgs(args: unknown): args is SshShellCloseA
 
 // ======== Kubernetes Validators ========
 
-export function validateSshK8sListPodsArgs(args: unknown): boolean {
-  return isRecord(args);
+export interface SshK8sArthasAttachArgs {
+  sessionId: string;
+  command: string;
+  namespace?: string;
+  pod?: string;
+  container?: string;
+  pid?: string;
+  arthasVersion?: string;
+  jdkVersion?: string;
+  timeout?: number;
+}
+
+export function validateSshK8sArthasAttachArgs(args: unknown): args is SshK8sArthasAttachArgs {
+  return isRecord(args) && typeof args.command === "string" && typeof args.sessionId === "string";
 }
 
 export function validateSshK8sPodLogsArgs(args: unknown): boolean {

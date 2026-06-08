@@ -161,7 +161,7 @@ Cursor 设置 → Features → MCP Servers → 添加：
 #### 核心面板功能
 1. **💻 交互终端 (WebShell Terminal)**：支持键盘输入及 ANSI 彩色代码渲染的伪终端 (PTY) 协作控制台。
 2. **📂 文件管理器 (SFTP Explorer)**：可视化浏览服务器文件系统、双击下钻目录、上级返回。
-3. **☸️ Kubernetes 管理器 (K8s Board)**：展示不同 Namespaces 下的 Pod 列表状态，一键查看实时日志流，并集成 Arthas 智能诊断弹窗进行一键挂载及指令执行。
+3. **☸️ Kubernetes 管理器 (K8s Board)**：展示不同 Namespaces 下的 Pod 列表状态，一键查看实时日志流，执行容器内命令和跨主机拷贝文件。集成 **Arthas 智能诊断面板**，支持**全离线模式**（可自带 Arthas 资源和定制化 JDK，完全脱离外网）。搭载 **K8s 智能探测** 引擎，全自动寻找 `kubeconfig` 证书与 `kubectl` 路径，并提供 UI 手动覆写入口。
 4. **📊 系统监控中心 (System Monitor)**：监控服务器 CPU/内存/磁盘负载情况，按 CPU/内存占用率展示实时活跃进程。
 5. **🔌 会话连接管理器 (Connection Manager)**：侧边栏支持随时点击 `+` 按钮，通过图形界面输入主机 IP、端口、用户名和密码/私钥直连新服务器。
 

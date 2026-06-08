@@ -161,7 +161,7 @@ To provide a more intuitive and visual terminal-cooperation workflow, this proje
 #### Core Panels
 1. **💻 Terminal (WebShell)**: An interactive pseudo-terminal (PTY) console supporting keyboard inputs and live ANSI color code rendering.
 2. **📂 Files (SFTP Explorer)**: A visual file navigator allowing you to browse the remote directory tree, double-click into folders, and navigate back.
-3. **☸️ Kubernetes**: Lists Pods across namespaces, displays real-time logs, and provides a built-in Arthas container diagnostician panel for automated code attach and diagnostics execution.
+3. **☸️ Kubernetes**: Lists Pods across namespaces, displays real-time logs, executes commands, and copies files. Features a built-in **Arthas container diagnostician panel** that operates in **Offline Mode** (bundling its own assets and JDK without requiring internet access). Includes **Smart K8s Discovery** to automatically find `kubeconfig` and `kubectl` paths, with UI fields for manual overrides.
 4. **📊 Monitoring**: Displays real-time server load statistics (CPU, Memory, Disk) and active processes sorted by CPU/Memory utilization.
 5. **🔌 Connection Manager**: Allows you to click the `+` button in the sidebar to fill in host, port, username, and authentication credentials (password/private key) to launch new SSH sessions directly from the UI.
 
