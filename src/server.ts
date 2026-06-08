@@ -27,7 +27,7 @@ export function startHttpServer(initialPort: number = 12222) {
       return;
     }
 
-    const url = new URL(req.url || "", `http://localhost:${port}`);
+    const url = new URL(req.url || "", `http://localhost:${currentPort}`);
 
     if (url.pathname === "/api/sessions" && req.method === "GET") {
       const sessions = listSessions();
@@ -414,7 +414,7 @@ export function startHttpServer(initialPort: number = 12222) {
   const wss = new WebSocketServer({ noServer: true });
 
   wss.on("connection", (ws: WebSocket, request: http.IncomingMessage) => {
-    const url = new URL(request.url || "", `http://localhost:${port}`);
+    const url = new URL(request.url || "", `http://localhost:${currentPort}`);
     const shellId = url.searchParams.get("shellId");
 
     if (!shellId) {
@@ -448,7 +448,7 @@ export function startHttpServer(initialPort: number = 12222) {
 
   // Upgrade HTTP connections to WebSocket
   server.on("upgrade", (request, socket, head) => {
-    const url = new URL(request.url || "", `http://localhost:${port}`);
+    const url = new URL(request.url || "", `http://localhost:${currentPort}`);
     if (url.pathname === "/ws/shell") {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);

@@ -385,7 +385,7 @@ export function validateSshK8sPodCpArgs(args: unknown): boolean {
          (args.direction === "to_pod" || args.direction === "from_pod");
 }
 
-export function validateSshK8sArthasAttachArgs(args: unknown): boolean {
-  return isRecord(args) && typeof args.command === "string";
+export function validateSshK8sListPodsArgs(args: unknown): boolean {
+  return isRecord(args);
 }
 

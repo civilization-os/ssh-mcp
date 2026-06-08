@@ -45,7 +45,7 @@ function remoteFileExists(client: Client, remotePath: string): Promise<boolean> 
     client.exec(`[ -f "${remotePath}" ] && echo "exists"`, (err, channel) => {
       if (err) return resolve(false);
       let out = "";
-      channel.on("data", (d) => out += d.toString());
+      channel.on("data", (d: Buffer) => out += d.toString());
       channel.on("close", () => resolve(out.trim() === "exists"));
     });
   });
@@ -338,7 +338,7 @@ ${javaCmd} -jar ${useBuiltinArthas ? remoteArthasJar : "/tmp/arthas-boot.jar"} $
     const runCmd = `cat > ${scriptName} << 'MCP_SCRIPT_EOF'\n${script}\nMCP_SCRIPT_EOF\nchmod +x ${scriptName} && ${scriptName}; rm -f ${scriptName}`;
     
     return execQuickCommand(client, runCmd, args.timeout ?? 300000);
-  });
+  }) as { stdout: string; stderr: string; exitCode: number | null };
 
   const contents = [{ type: "text" as const, text: result.stdout || "(no arthas output)" }];
   if (result.stderr) {
