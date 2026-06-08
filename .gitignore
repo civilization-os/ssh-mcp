@@ -3,3 +3,4 @@ build/
 .claude/
 *.log
 sessions-store.json
+.mcp.json
