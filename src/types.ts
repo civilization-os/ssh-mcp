@@ -194,9 +194,7 @@ export interface SshShellArgs {
 
 export interface SshShellWriteArgs {
   shellId: string;
-  input?: string;
-  command?: string;
-  pressEnter?: boolean;
+  input: string;
 }
 
 export interface SshShellReadArgs {
@@ -339,9 +337,7 @@ export function validateSshShellArgs(args: unknown): args is SshShellArgs {
 }
 
 export function validateSshShellWriteArgs(args: unknown): args is SshShellWriteArgs {
-  return isRecord(args)
-    && typeof args.shellId === "string"
-    && (typeof args.input === "string" || typeof args.command === "string");
+  return isRecord(args) && typeof args.shellId === "string" && typeof args.input === "string";
 }
 
 export function validateSshShellReadArgs(args: unknown): args is SshShellReadArgs {

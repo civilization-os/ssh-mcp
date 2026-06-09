@@ -403,20 +403,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_shell_write",
-      description: "Write input to an interactive shell. Use input for raw text/control sequences, or command for a shell command. command appends Enter by default unless pressEnter=false.",
+      description: "Write input to an interactive shell. Supports text, commands, and control sequences. Use \\n for newline/enter.",
       inputSchema: {
         type: "object",
         properties: {
           shellId: { type: "string", description: "Shell ID from ssh_shell" },
-          input: { type: "string", description: "Raw text to write to shell stdin. Use for exact bytes or control sequences." },
-          command: { type: "string", description: "Convenience field for a shell command. Appends Enter by default." },
-          pressEnter: { type: "boolean", description: "Append a trailing newline/Enter after input or command. Default: true for command, false for raw input." },
+          input: { type: "string", description: "Text to write to the shell stdin (use \\n for Enter)" },
         },
-        required: ["shellId"],
-        oneOf: [
-          { required: ["shellId", "input"] },
-          { required: ["shellId", "command"] },
-        ],
+        required: ["shellId", "input"],
       },
     },
     {
