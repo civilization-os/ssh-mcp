@@ -5,6 +5,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  SubscribeRequestSchema,
+  UnsubscribeRequestSchema,
   McpError,
   ErrorCode,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -55,6 +59,7 @@ import {
   handleShellClose,
   handleShellList,
   cleanShellsBySession,
+  shellEvents,
 } from "./handlers/shell.js";
 import { startHttpServer } from "./server.js";
 import {
@@ -117,8 +122,69 @@ const sessionAuthFields = {
 
 const server = new Server(
   { name: "ssh-mcp", version: "2.0.0" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {}, resources: { subscribe: true } } }
 );
+
+// --- Resource definitions ---
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  return {
+    resources: [
+      {
+        uri: "mcp://ssh/shell/{shellId}/output",
+        name: "Interactive Shell Output Stream",
+        description: "Real-time incremental output from a PTY shell session",
+        mimeType: "text/plain",
+      }
+    ],
+  };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  const uri = request.params.uri;
+  const match = uri.match(/^mcp:\/\/ssh\/shell\/([^/]+)\/output$/);
+  if (!match) {
+    throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
+  }
+  
+  const shellId = match[1];
+  const result = await handleShellRead({ shellId, peek: true } as any);
+  
+  return {
+    contents: [
+      {
+        uri,
+        mimeType: "text/plain",
+        text: (result as any).content[0].text,
+      }
+    ],
+  };
+});
+
+// --- Subscription management ---
+
+const activeSubscriptions = new Set<string>();
+
+server.setRequestHandler(SubscribeRequestSchema, async (request) => {
+  activeSubscriptions.add(request.params.uri);
+  return {};
+});
+
+server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
+  activeSubscriptions.delete(request.params.uri);
+  return {};
+});
+
+// Listen for shell data events and notify subscribers
+shellEvents.on("data", (shellId: string) => {
+  const uri = `mcp://ssh/shell/${shellId}/output`;
+  if (activeSubscriptions.has(uri)) {
+    server.notification({
+      method: "notifications/resources/updated",
+      params: { uri },
+    });
+  }
+});
 
 // --- Tool definitions ---
 

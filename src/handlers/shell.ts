@@ -4,6 +4,9 @@ import {
   SshShellArgs, SshShellWriteArgs, SshShellReadArgs,
   SshShellResizeArgs, SshShellCloseArgs, ToolResult,
 } from "../types.js";
+import { EventEmitter } from "events";
+
+export const shellEvents = new EventEmitter();
 
 // --- Shell session tracking ---
 
@@ -228,6 +231,7 @@ export async function handleShellCreate(args: SshShellArgs) {
         shell.wsClients?.forEach(ws => {
           if (ws.readyState === 1) ws.send(str);
         });
+        shellEvents.emit("data", shellId);
       });
 
       channel.stderr.on("data", (data: Buffer) => {
@@ -236,6 +240,7 @@ export async function handleShellCreate(args: SshShellArgs) {
         shell.wsClients?.forEach(ws => {
           if (ws.readyState === 1) ws.send(str);
         });
+        shellEvents.emit("data", shellId);
       });
 
       channel.on("close", () => {
