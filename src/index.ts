@@ -142,23 +142,62 @@ server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
 });
 
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
-  // Use handleShellList directly but we need the raw list to avoid parsing the text result.
-  // Instead, let's just fetch it via our helper in shell.ts.
   const { listActiveShells } = await import("./handlers/shell.js");
   const shells = listActiveShells();
   
-  return {
-    resources: shells.map(s => ({
+  const resources = [
+    {
+      uri: "mcp://ssh/sessions",
+      name: "Active SSH Sessions",
+      description: "List of all persistent SSH sessions managed by this server",
+      mimeType: "application/json",
+    },
+    {
+      uri: "mcp://ssh/shells",
+      name: "Active Interactive Shells",
+      description: "List of all active PTY shell sessions and their status",
+      mimeType: "application/json",
+    }
+  ];
+
+  shells.forEach(s => {
+    resources.push({
       uri: `mcp://ssh/shell/${s.id}/output`,
       name: `Shell Output (${s.id})`,
       description: `Output stream for shell ${s.id} (Session: ${s.sessionId})`,
       mimeType: "application/json",
-    })),
-  };
+    });
+  });
+  
+  return { resources };
 });
 
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const uri = request.params.uri;
+
+  if (uri === "mcp://ssh/sessions") {
+    const sessions = listSessions();
+    return {
+      contents: [{
+        uri,
+        mimeType: "application/json",
+        text: JSON.stringify(sessions, null, 2),
+      }],
+    };
+  }
+
+  if (uri === "mcp://ssh/shells") {
+    const { listActiveShells } = await import("./handlers/shell.js");
+    const shells = listActiveShells();
+    return {
+      contents: [{
+        uri,
+        mimeType: "application/json",
+        text: JSON.stringify(shells, null, 2),
+      }],
+    };
+  }
+
   const match = uri.match(/^mcp:\/\/ssh\/shell\/([^/]+)\/output$/);
   if (!match) {
     throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
@@ -489,7 +528,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ======== Interactive Shell (PTY) ========
     {
       name: "ssh_shell",
-      description: "Create an interactive PTY shell session on a remote server. Returns a shellId for read/write/resize/close operations. Like Xshell — you write commands, read output.",
+      description: "Create an interactive PTY shell session on a remote server. Returns a shellId. RECOMMENDATION: For real-time monitoring and high-frequency output, SUBSCRIBE to the resource 'mcp://ssh/shell/{shellId}/output' instead of polling ssh_shell_read.",
       inputSchema: {
         type: "object",
         properties: {
@@ -517,7 +556,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_shell_read",
-      description: "Read buffered output from an interactive shell. Returns a JSON object with 'content', 'status', and 'promptShown'. Features: pattern-based waiting (expect), ANSI stripping, and tail-line snapshots.",
+      description: "Read buffered output from an interactive shell. Returns a JSON object. NOTE: This is a polling-based read. For real-time streaming, please use the resource 'mcp://ssh/shell/{shellId}/output'.",
       inputSchema: {
         type: "object",
         properties: {
