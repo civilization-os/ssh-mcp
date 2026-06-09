@@ -356,9 +356,9 @@ export default function App() {
       <div 
         className="glass-panel" 
         style={{ 
-          width: sidebarCollapsed ? "0px" : "300px", 
-          minWidth: sidebarCollapsed ? "0px" : "300px", 
-          borderRight: sidebarCollapsed ? "none" : "1px solid var(--panel-border)", 
+          width: sidebarCollapsed ? "68px" : "300px", 
+          minWidth: sidebarCollapsed ? "68px" : "300px", 
+          borderRight: "1px solid var(--panel-border)", 
           display: "flex", 
           flexDirection: "column", 
           height: "100%", 
@@ -368,36 +368,91 @@ export default function App() {
         }}
       >
         
-        {/* Title Bar */}
-        <div style={{ padding: "24px 20px", borderBottom: "1px solid var(--panel-border)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div>
-            <h1 className="gradient-text" style={{ fontSize: "20px", margin: 0, fontWeight: 700, letterSpacing: "-0.5px" }}>
-              {t("title")}
-            </h1>
-            <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
-              {t("subtitle")}
-            </p>
-          </div>
-          <button
-            onClick={() => setLang(lang === "zh" ? "en" : "zh")}
-            style={{
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid var(--panel-border)",
-              color: "var(--text-primary)",
-              borderRadius: "6px",
-              padding: "4px 8px",
-              fontSize: "11px",
-              cursor: "pointer",
-              transition: "all 0.2s ease"
-            }}
-          >
-            {t("langToggle")}
-          </button>
+        {/* Title Bar / Collapse Button */}
+        <div style={{ 
+          padding: sidebarCollapsed ? "18px 0" : "24px 20px", 
+          borderBottom: "1px solid var(--panel-border)", 
+          display: "flex", 
+          flexDirection: sidebarCollapsed ? "column" : "row",
+          alignItems: "center", 
+          justifyContent: sidebarCollapsed ? "center" : "space-between",
+          gap: "10px"
+        }}>
+          {!sidebarCollapsed ? (
+            <>
+              <div>
+                <h1 className="gradient-text" style={{ fontSize: "20px", margin: 0, fontWeight: 700, letterSpacing: "-0.5px" }}>
+                  {t("title")}
+                </h1>
+                <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
+                  {t("subtitle")}
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <button
+                  onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+                  style={{
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1px solid var(--panel-border)",
+                    color: "var(--text-primary)",
+                    borderRadius: "6px",
+                    padding: "4px 8px",
+                    fontSize: "11px",
+                    cursor: "pointer"
+                  }}
+                >
+                  {t("langToggle")}
+                </button>
+                <button
+                  onClick={() => setSidebarCollapsed(true)}
+                  style={{
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1px solid var(--panel-border)",
+                    color: "var(--text-primary)",
+                    borderRadius: "6px",
+                    padding: "4px 8px",
+                    fontSize: "11px",
+                    cursor: "pointer"
+                  }}
+                  title={lang === "zh" ? "收起菜单" : "Collapse Menu"}
+                >
+                  ◀
+                </button>
+              </div>
+            </>
+          ) : (
+            <button
+              onClick={() => setSidebarCollapsed(false)}
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid var(--panel-border)",
+                color: "var(--text-primary)",
+                borderRadius: "6px",
+                width: "36px",
+                height: "36px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                fontSize: "14px"
+              }}
+              title={lang === "zh" ? "展开菜单" : "Expand Menu"}
+            >
+              ▶
+            </button>
+          )}
         </div>
 
         {/* Tab Selection - Upgraded */}
         {selectedSessionId && (
-          <div style={{ padding: "10px 10px", borderBottom: "1px solid var(--panel-border)", display: "flex", flexDirection: "column", gap: "2px" }}>
+          <div style={{ 
+            padding: sidebarCollapsed ? "10px 5px" : "10px 10px", 
+            borderBottom: "1px solid var(--panel-border)", 
+            display: "flex", 
+            flexDirection: "column", 
+            gap: "4px",
+            alignItems: sidebarCollapsed ? "center" : "stretch"
+          }}>
             {[
               { id: "terminal", icon: "💻", label: t("tabTerminal"), color: "#00f2fe", glow: "rgba(0,242,254,0.2)" },
               { id: "sftp",     icon: "📂", label: t("tabSftp"),     color: "#f7971e", glow: "rgba(247,151,30,0.2)"  },
@@ -409,17 +464,20 @@ export default function App() {
                 <div
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
+                  title={sidebarCollapsed ? tab.label : undefined}
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    gap: "10px",
-                    padding: "10px 12px",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    gap: sidebarCollapsed ? "0" : "10px",
+                    padding: sidebarCollapsed ? "10px" : "10px 12px",
+                    width: sidebarCollapsed ? "40px" : "auto",
+                    height: sidebarCollapsed ? "40px" : "auto",
                     borderRadius: "8px",
                     cursor: "pointer",
                     fontSize: "14px",
                     fontWeight: isActive ? 700 : 500,
                     position: "relative",
-                    overflow: "hidden",
                     background: isActive
                       ? `linear-gradient(135deg, ${tab.glow}, rgba(255,255,255,0.03))`
                       : "transparent",
@@ -454,18 +512,8 @@ export default function App() {
                       boxShadow: `0 0 8px ${tab.color}`,
                     }} />
                   )}
-                  <span style={{ fontSize: "16px", marginLeft: isActive ? "4px" : "0" }}>{tab.icon}</span>
-                  <span>{tab.label}</span>
-                  {isActive && (
-                    <div style={{
-                      marginLeft: "auto",
-                      width: "6px",
-                      height: "6px",
-                      borderRadius: "50%",
-                      background: tab.color,
-                      boxShadow: `0 0 6px ${tab.color}`,
-                    }} />
-                  )}
+                  <span style={{ fontSize: "16px", marginLeft: (!sidebarCollapsed && isActive) ? "4px" : "0" }}>{tab.icon}</span>
+                  {!sidebarCollapsed && <span>{tab.label}</span>}
                 </div>
               );
             })}
@@ -473,7 +521,8 @@ export default function App() {
         )}
 
         {/* Sessions Section */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 12px" }}>
+        {!sidebarCollapsed && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "16px 12px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", paddingLeft: "8px" }}>
             <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "var(--text-secondary)", letterSpacing: "1px" }}>
               {t("sessionsTitle")} ({sessions.length})
@@ -615,38 +664,11 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Main Panel */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
-        {/* Sidebar Collapse Toggle Button */}
-        <button
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          style={{
-            position: "absolute",
-            left: "14px",
-            top: "22px",
-            zIndex: 100,
-            width: "28px",
-            height: "28px",
-            borderRadius: "50%",
-            background: "rgba(255, 255, 255, 0.05)",
-            border: "1px solid rgba(255, 255, 255, 0.1)",
-            color: "var(--text-primary)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-            fontSize: "12px",
-            transition: "all 0.2s ease",
-          }}
-          onMouseEnter={e => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-          onMouseLeave={e => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
-          title={sidebarCollapsed ? (lang === "zh" ? "展开侧边栏" : "Expand Sidebar") : (lang === "zh" ? "收起侧边栏" : "Collapse Sidebar")}
-        >
-          {sidebarCollapsed ? "▶" : "◀"}
-        </button>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {!selectedSessionId ? (
           <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center" }}>
             <div className="glass-panel" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
@@ -1092,7 +1114,6 @@ interface SelectedSessionViewProps {
 }
 
 function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const t = (key: keyof typeof translations["en"]): string => {
     return translations[lang][key] || translations["en"][key] || "";
   };
@@ -1103,122 +1124,89 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
 
   return (
     <div className="glass-panel" style={{ 
-      margin: "12px 12px 0 52px", 
-      padding: isCollapsed ? "8px 16px" : "14px 16px", 
-      borderRadius: "14px",
+      margin: "12px 12px 0 12px", 
+      padding: "10px 16px", 
+      borderRadius: "10px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "20px",
+      background: "rgba(255, 255, 255, 0.02)",
+      border: "1px solid var(--panel-border)",
       transition: "all 0.2s ease"
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: isCollapsed ? "center" : "flex-start", gap: "16px" }}>
-        <div 
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          style={{ cursor: "pointer", flex: 1, display: "flex", alignItems: "center", gap: "10px" }}
-        >
-          <div style={{ 
-            color: "var(--text-secondary)", 
-            fontSize: "12px", 
-            transform: isCollapsed ? "rotate(-90deg)" : "none",
-            transition: "transform 0.2s ease",
-            marginTop: isCollapsed ? "0" : "4px"
-          }}>
-            ▼
-          </div>
-          <div>
-            {isCollapsed ? (
-              <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
-                <span style={{ fontSize: "15px", fontWeight: 700, color: "var(--text-primary)" }}>{session.label}</span>
-                <span style={{ fontSize: "12px", color: "var(--text-secondary)", opacity: 0.8 }}>
-                  {session.username}@{session.host}:{session.port}
-                </span>
-              </div>
-            ) : (
-              <>
-                <div style={{ fontSize: "11px", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "6px" }}>
-                  {t("sessionDetails")}
-                </div>
-                <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>{session.label}</div>
-              </>
-            )}
-          </div>
+      {/* Session Title & Connection Info */}
+      <div style={{ display: "flex", alignItems: "center", gap: "14px", flex: 1, minWidth: 0 }}>
+        {/* Status Dot */}
+        <div style={{ 
+          width: "8px", 
+          height: "8px", 
+          borderRadius: "50%", 
+          background: "var(--accent-neon)", 
+          boxShadow: "0 0 6px var(--accent-neon)",
+          flexShrink: 0
+        }} />
+        
+        {/* Session Name */}
+        <span style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-primary)", flexShrink: 0 }}>
+          {session.label}
+        </span>
+        
+        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.1)", flexShrink: 0 }} />
+
+        {/* Horizontal Info Items */}
+        <div style={{ display: "flex", alignItems: "center", gap: "16px", flex: 1, minWidth: 0, overflowX: "auto" }}>
+          <InlineInfoItem label={t("hostPort")} value={`${session.username}@${session.host}:${session.port}`} iconType="host" />
+          <InlineInfoItem label={t("authStatus")} value={authLabel} iconType="auth" />
+          <InlineInfoItem label="kubectl" value={session.kubectlPath || t("autoDetect")} iconType="kubectl" />
+          <InlineInfoItem label="kubeconfig" value={session.kubeconfig || t("autoDetect")} iconType="kubeconfig" />
         </div>
-        <button
-          onClick={() => onEdit(session)}
-          style={{
-            background: "rgba(0, 242, 254, 0.08)",
-            border: "1px solid rgba(0, 242, 254, 0.25)",
-            color: "var(--accent-blue)",
-            borderRadius: "8px",
-            padding: "6px 10px",
-            fontSize: "12px",
-            cursor: "pointer",
-            flexShrink: 0
-          }}
-        >
-          {t("editSession")}
-        </button>
       </div>
-      {!isCollapsed && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginTop: "14px" }}>
-          <SessionInfoBlock label={t("hostPort")} value={`${session.username}@${session.host}:${session.port}`} iconType="host" />
-          <SessionInfoBlock label={t("authStatus")} value={authLabel} iconType="auth" />
-          <SessionInfoBlock label="kubectl" value={session.kubectlPath || t("autoDetect")} iconType="kubectl" />
-          <SessionInfoBlock label="kubeconfig" value={session.kubeconfig || t("autoDetect")} iconType="kubeconfig" />
-        </div>
-      )}
+
+      {/* Edit button */}
+      <button
+        onClick={() => onEdit(session)}
+        style={{
+          background: "rgba(0, 242, 254, 0.05)",
+          border: "1px solid rgba(0, 242, 254, 0.2)",
+          color: "var(--accent-blue)",
+          borderRadius: "6px",
+          padding: "6px 12px",
+          fontSize: "12px",
+          cursor: "pointer",
+          flexShrink: 0,
+          transition: "all 0.2s"
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background = "rgba(0, 242, 254, 0.12)"; e.currentTarget.style.borderColor = "rgba(0, 242, 254, 0.35)"; }}
+        onMouseLeave={e => { e.currentTarget.style.background = "rgba(0, 242, 254, 0.05)"; e.currentTarget.style.borderColor = "rgba(0, 242, 254, 0.2)"; }}
+      >
+        {t("editSession")}
+      </button>
     </div>
   );
 }
 
-function SessionInfoBlock({ label, value, iconType }: { label: string; value: string; iconType?: 'host' | 'auth' | 'kubectl' | 'kubeconfig' }) {
+function InlineInfoItem({ label, value, iconType }: { label: string; value: string; iconType?: 'host' | 'auth' | 'kubectl' | 'kubeconfig' }) {
   const getIcon = () => {
     switch (iconType) {
       case 'host':
-        return (
-          <svg style={{ width: '15px', height: '15px', color: 'var(--accent-blue)' }} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"></path>
-          </svg>
-        );
+        return <span style={{ color: 'var(--accent-blue)', fontSize: '12px' }}>🖥️</span>;
       case 'auth':
-        return (
-          <svg style={{ width: '15px', height: '15px', color: 'var(--accent-neon)' }} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
-          </svg>
-        );
+        return <span style={{ color: 'var(--accent-neon)', fontSize: '12px' }}>🛡️</span>;
       case 'kubectl':
-        return (
-          <svg style={{ width: '15px', height: '15px', color: '#a855f7' }} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path>
-          </svg>
-        );
+        return <span style={{ color: '#a855f7', fontSize: '12px' }}>🧪</span>;
       case 'kubeconfig':
-        return (
-          <svg style={{ width: '15px', height: '15px', color: '#f7971e' }} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-          </svg>
-        );
+        return <span style={{ color: '#f7971e', fontSize: '12px' }}>📄</span>;
       default:
         return null;
     }
   };
 
   return (
-    <div style={{ 
-      background: "rgba(255,255,255,0.015)", 
-      border: "1px solid rgba(255,255,255,0.05)", 
-      borderRadius: "10px", 
-      padding: "8px 12px",
-      display: "flex",
-      alignItems: "center",
-      gap: "10px",
-      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
-      transition: "all 0.2s"
-    }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "24px", height: "24px", borderRadius: "6px", background: "rgba(255,255,255,0.03)", flexShrink: 0 }}>
-        {getIcon()}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: "10px", color: "var(--text-secondary)", opacity: 0.8, marginBottom: "2px" }}>{label}</div>
-        <div style={{ fontSize: "13px", color: "var(--text-primary)", fontWeight: 500, wordBreak: "break-all", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={value}>{value}</div>
-      </div>
+    <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0, fontSize: "12px" }}>
+      {getIcon()}
+      <span style={{ color: "var(--text-secondary)", opacity: 0.8 }}>{label}:</span>
+      <span style={{ color: "var(--text-primary)", fontWeight: 500, whiteSpace: "nowrap" }} title={value}>{value}</span>
     </div>
   );
 }
