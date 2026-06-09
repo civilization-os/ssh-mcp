@@ -209,8 +209,27 @@ export async function handleShellWrite(args: SshShellWriteArgs) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' is closed` }], isError: true };
   }
 
+  // Adapt for agents that send literal \n or forget it
+  let input = args.input || "";
+  
+  // 1. Unescape literal \n, \r, \t
+  input = input
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t');
+  
+  // 2. Auto-append newline if missing and not a control sequence
+  if (input.length > 0 && 
+      !input.endsWith('\n') && 
+      !input.endsWith('\r') &&
+      !input.endsWith('\x03') && // Ctrl+C
+      !input.endsWith('\x04')    // Ctrl+D
+     ) {
+    input += '\n';
+  }
+
   return new Promise<ToolResult>((resolve) => {
-    shell.channel.stdin.write(args.input, "utf-8", (err: Error | null | undefined) => {
+    shell.channel.stdin.write(input, "utf-8", (err: Error | null | undefined) => {
       if (err) {
         resolve({ content: [{ type: "text" as const, text: `Error writing to shell: ${err.message}` }], isError: true });
         return;
@@ -218,7 +237,7 @@ export async function handleShellWrite(args: SshShellWriteArgs) {
       resolve({
         content: [{
           type: "text" as const,
-          text: `Written ${args.input.length} bytes to shell ${args.shellId}`,
+          text: `Written ${input.length} bytes to shell ${args.shellId}`,
         }],
       });
     });

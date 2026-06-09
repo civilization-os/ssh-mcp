@@ -1003,6 +1003,7 @@ interface SelectedSessionViewProps {
 }
 
 function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps) {
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const t = (key: keyof typeof translations["en"]): string => {
     return translations[lang][key] || translations["en"][key] || "";
   };
@@ -1012,13 +1013,43 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
   const authLabel = session.authType === "privateKey" ? t("authPrivateKeySaved") : t("authPasswordSaved");
 
   return (
-    <div className="glass-panel" style={{ margin: "12px 12px 0", padding: "14px 16px", borderRadius: "14px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" }}>
-        <div>
-          <div style={{ fontSize: "11px", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "6px" }}>
-            {t("sessionDetails")}
+    <div className="glass-panel" style={{ 
+      margin: "12px 12px 0", 
+      padding: isCollapsed ? "8px 16px" : "14px 16px", 
+      borderRadius: "14px",
+      transition: "all 0.2s ease"
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: isCollapsed ? "center" : "flex-start", gap: "16px" }}>
+        <div 
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          style={{ cursor: "pointer", flex: 1, display: "flex", alignItems: "center", gap: "10px" }}
+        >
+          <div style={{ 
+            color: "var(--text-secondary)", 
+            fontSize: "12px", 
+            transform: isCollapsed ? "rotate(-90deg)" : "none",
+            transition: "transform 0.2s ease",
+            marginTop: isCollapsed ? "0" : "4px"
+          }}>
+            ▼
           </div>
-          <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>{session.label}</div>
+          <div>
+            {isCollapsed ? (
+              <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+                <span style={{ fontSize: "15px", fontWeight: 700, color: "var(--text-primary)" }}>{session.label}</span>
+                <span style={{ fontSize: "12px", color: "var(--text-secondary)", opacity: 0.8 }}>
+                  {session.username}@{session.host}:{session.port}
+                </span>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: "11px", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "6px" }}>
+                  {t("sessionDetails")}
+                </div>
+                <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>{session.label}</div>
+              </>
+            )}
+          </div>
         </div>
         <button
           onClick={() => onEdit(session)}
@@ -1030,17 +1061,20 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
             padding: "6px 10px",
             fontSize: "12px",
             cursor: "pointer",
+            flexShrink: 0
           }}
         >
           {t("editSession")}
         </button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginTop: "14px" }}>
-        <SessionInfoBlock label={t("hostPort")} value={`${session.username}@${session.host}:${session.port}`} />
-        <SessionInfoBlock label={t("authStatus")} value={authLabel} />
-        <SessionInfoBlock label="kubectl" value={session.kubectlPath || t("autoDetect")} />
-        <SessionInfoBlock label="kubeconfig" value={session.kubeconfig || t("autoDetect")} />
-      </div>
+      {!isCollapsed && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginTop: "14px" }}>
+          <SessionInfoBlock label={t("hostPort")} value={`${session.username}@${session.host}:${session.port}`} />
+          <SessionInfoBlock label={t("authStatus")} value={authLabel} />
+          <SessionInfoBlock label="kubectl" value={session.kubectlPath || t("autoDetect")} />
+          <SessionInfoBlock label="kubeconfig" value={session.kubeconfig || t("autoDetect")} />
+        </div>
+      )}
     </div>
   );
 }
