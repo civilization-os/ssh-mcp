@@ -63,28 +63,6 @@ function SessionItem({
   onDelete: () => void;
   lang: Language;
 }) {
-  const [timeLeft, setTimeLeft] = useState<string>("");
-
-  useEffect(() => {
-    if (!sess.lastUsedAt || !sess.idleTimeoutMs) return;
-
-    const update = () => {
-      const expiresAt = sess.lastUsedAt! + sess.idleTimeoutMs!;
-      const remaining = expiresAt - Date.now();
-      if (remaining <= 0) {
-        setTimeLeft("Expired");
-        return;
-      }
-      const mins = Math.floor(remaining / 60000);
-      const secs = Math.floor((remaining % 60000) / 1000);
-      setTimeLeft(`${mins}m ${secs}s`);
-    };
-
-    update();
-    const timer = setInterval(update, 1000);
-    return () => clearInterval(timer);
-  }, [sess.lastUsedAt, sess.idleTimeoutMs]);
-
   return (
     <div
       onClick={onSelect}
@@ -125,19 +103,24 @@ function SessionItem({
         {sess.kubectlPath && <span style={sessionBadgeStyle}>kubectl</span>}
         {sess.kubeconfig && <span style={sessionBadgeStyle}>kubeconfig</span>}
       </div>
-      {timeLeft && (
-        <div style={{ 
-          fontSize: "10px", 
-          marginTop: "6px", 
-          color: timeLeft.includes("m") ? "var(--accent-neon)" : "var(--accent-pink)",
-          opacity: 0.8,
-          display: "flex",
-          justifyContent: "space-between"
-        }}>
-          <span>{lang === "zh" ? "闲置清理倒计时" : "Idle cleanup in"}:</span>
-          <span style={{ fontFamily: "monospace" }}>{timeLeft}</span>
-        </div>
-      )}
+      <div style={{ 
+        fontSize: "10px", 
+        marginTop: "8px", 
+        color: "var(--accent-neon)",
+        opacity: 0.8,
+        display: "flex",
+        alignItems: "center",
+        gap: "6px"
+      }} title={translations[lang].heartbeatTooltip}>
+        <span className="pulse-glow" style={{ 
+          width: "6px", 
+          height: "6px", 
+          borderRadius: "50%", 
+          background: "var(--accent-neon)",
+          display: "inline-block"
+        }} />
+        <span style={{ fontWeight: 500 }}>{translations[lang].heartbeatActive}</span>
+      </div>
     </div>
   );
 }
@@ -373,56 +356,62 @@ export default function App() {
           padding: sidebarCollapsed ? "18px 0" : "24px 20px", 
           borderBottom: "1px solid var(--panel-border)", 
           display: "flex", 
-          flexDirection: sidebarCollapsed ? "column" : "row",
           alignItems: "center", 
-          justifyContent: sidebarCollapsed ? "center" : "space-between",
-          gap: "10px"
+          justifyContent: "center",
+          height: "80px",
+          boxSizing: "border-box",
+          position: "relative",
+          width: "100%",
+          flexShrink: 0
         }}>
-          {!sidebarCollapsed ? (
-            <>
-              <div>
-                <h1 className="gradient-text" style={{ fontSize: "20px", margin: 0, fontWeight: 700, letterSpacing: "-0.5px" }}>
-                  {t("title")}
-                </h1>
-                <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
-                  {t("subtitle")}
-                </p>
-              </div>
-              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                <button
-                  onClick={() => setLang(lang === "zh" ? "en" : "zh")}
-                  style={{
-                    background: "rgba(255,255,255,0.05)",
-                    border: "1px solid var(--panel-border)",
-                    color: "var(--text-primary)",
-                    borderRadius: "6px",
-                    padding: "4px 8px",
-                    fontSize: "11px",
-                    cursor: "pointer"
-                  }}
-                >
-                  {t("langToggle")}
-                </button>
-                <button
-                  onClick={() => setSidebarCollapsed(true)}
-                  style={{
-                    background: "rgba(255,255,255,0.05)",
-                    border: "1px solid var(--panel-border)",
-                    color: "var(--text-primary)",
-                    borderRadius: "6px",
-                    padding: "4px 8px",
-                    fontSize: "11px",
-                    cursor: "pointer"
-                  }}
-                  title={lang === "zh" ? "收起菜单" : "Collapse Menu"}
-                >
-                  ◀
-                </button>
-              </div>
-            </>
-          ) : (
+          {/* Inner Title Container */}
+          <div style={{
+            position: "absolute",
+            left: "20px",
+            width: "180px",
+            display: "flex",
+            flexDirection: "column",
+            opacity: sidebarCollapsed ? 0 : 1,
+            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+            pointerEvents: sidebarCollapsed ? "none" : "auto",
+            overflow: "hidden",
+            whiteSpace: "nowrap"
+          }}>
+            <h1 className="gradient-text" style={{ fontSize: "20px", margin: 0, fontWeight: 700, letterSpacing: "-0.5px" }}>
+              {t("title")}
+            </h1>
+            <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
+              {t("subtitle")}
+            </p>
+          </div>
+
+          {/* Buttons Container */}
+          <div style={{
+            position: "absolute",
+            right: sidebarCollapsed ? "16px" : "20px",
+            display: "flex",
+            gap: "6px",
+            alignItems: "center",
+            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
+          }}>
+            {!sidebarCollapsed && (
+              <button
+                onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+                style={{
+                  background: "rgba(255,255,255,0.05)",
+                  border: "1px solid var(--panel-border)",
+                  color: "var(--text-primary)",
+                  borderRadius: "6px",
+                  padding: "4px 8px",
+                  fontSize: "11px",
+                  cursor: "pointer"
+                }}
+              >
+                {t("langToggle")}
+              </button>
+            )}
             <button
-              onClick={() => setSidebarCollapsed(false)}
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
               style={{
                 background: "rgba(255,255,255,0.05)",
                 border: "1px solid var(--panel-border)",
@@ -436,22 +425,25 @@ export default function App() {
                 cursor: "pointer",
                 fontSize: "14px"
               }}
-              title={lang === "zh" ? "展开菜单" : "Expand Menu"}
+              title={sidebarCollapsed ? (lang === "zh" ? "展开菜单" : "Expand Menu") : (lang === "zh" ? "收起菜单" : "Collapse Menu")}
             >
-              ▶
+              {sidebarCollapsed ? "▶" : "◀"}
             </button>
-          )}
+          </div>
         </div>
 
         {/* Tab Selection - Upgraded */}
         {selectedSessionId && (
           <div style={{ 
-            padding: sidebarCollapsed ? "10px 5px" : "10px 10px", 
+            padding: "10px 0", 
             borderBottom: "1px solid var(--panel-border)", 
             display: "flex", 
             flexDirection: "column", 
             gap: "4px",
-            alignItems: sidebarCollapsed ? "center" : "stretch"
+            alignItems: "center",
+            width: "100%",
+            position: "relative",
+            flexShrink: 0
           }}>
             {[
               { id: "terminal", icon: "💻", label: t("tabTerminal"), color: "#00f2fe", glow: "rgba(0,242,254,0.2)" },
@@ -468,11 +460,9 @@ export default function App() {
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                    gap: sidebarCollapsed ? "0" : "10px",
-                    padding: sidebarCollapsed ? "10px" : "10px 12px",
-                    width: sidebarCollapsed ? "40px" : "auto",
-                    height: sidebarCollapsed ? "40px" : "auto",
+                    padding: "10px 12px",
+                    width: sidebarCollapsed ? "40px" : "260px",
+                    height: "40px",
                     borderRadius: "8px",
                     cursor: "pointer",
                     fontSize: "14px",
@@ -483,8 +473,10 @@ export default function App() {
                       : "transparent",
                     color: isActive ? tab.color : "var(--text-secondary)",
                     border: isActive ? `1px solid ${tab.color}33` : "1px solid transparent",
-                    transition: "all 0.25s ease",
+                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
                     boxShadow: isActive ? `0 2px 12px ${tab.glow}` : "none",
+                    overflow: "hidden",
+                    whiteSpace: "nowrap"
                   }}
                   onMouseEnter={e => {
                     if (!isActive) {
@@ -512,8 +504,29 @@ export default function App() {
                       boxShadow: `0 0 8px ${tab.color}`,
                     }} />
                   )}
-                  <span style={{ fontSize: "16px", marginLeft: (!sidebarCollapsed && isActive) ? "4px" : "0" }}>{tab.icon}</span>
-                  {!sidebarCollapsed && <span>{tab.label}</span>}
+                  <div style={{ 
+                    display: "flex", 
+                    alignItems: "center", 
+                    justifyContent: "center",
+                    width: "16px",
+                    flexShrink: 0,
+                    marginLeft: (!sidebarCollapsed && isActive) ? "4px" : "0",
+                    transition: "margin 0.3s"
+                  }}>
+                    <span style={{ fontSize: "16px" }}>{tab.icon}</span>
+                  </div>
+                  
+                  {/* Text Label */}
+                  <span style={{ 
+                    position: "absolute",
+                    left: "44px",
+                    opacity: sidebarCollapsed ? 0 : 1,
+                    transition: "opacity 0.2s ease",
+                    pointerEvents: sidebarCollapsed ? "none" : "auto",
+                    whiteSpace: "nowrap"
+                  }}>
+                    {tab.label}
+                  </span>
                 </div>
               );
             })}
@@ -521,8 +534,15 @@ export default function App() {
         )}
 
         {/* Sessions Section */}
-        {!sidebarCollapsed && (
-          <div style={{ flex: 1, overflowY: "auto", padding: "16px 12px" }}>
+        <div style={{ 
+          flex: 1, 
+          overflow: "hidden", 
+          opacity: sidebarCollapsed ? 0 : 1,
+          width: sidebarCollapsed ? "0px" : "300px",
+          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+          pointerEvents: sidebarCollapsed ? "none" : "auto"
+        }}>
+          <div style={{ width: "300px", padding: "16px 12px", height: "100%", overflowY: "auto", boxSizing: "border-box" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", paddingLeft: "8px" }}>
             <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "var(--text-secondary)", letterSpacing: "1px" }}>
               {t("sessionsTitle")} ({sessions.length})
@@ -612,14 +632,15 @@ export default function App() {
                     onClick={() => setActiveShellId(sh.id)}
                     style={{
                       padding: "10px 12px",
-                      borderRadius: "6px",
+                      borderRadius: "8px",
                       marginBottom: "6px",
                       cursor: "pointer",
-                      background: activeShellId === sh.id ? "rgba(255, 255, 255, 0.05)" : "rgba(255, 255, 255, 0.01)",
-                      border: `1px solid ${activeShellId === sh.id ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.03)"}`,
+                      background: activeShellId === sh.id ? "rgba(255, 255, 255, 0.08)" : "rgba(255, 255, 255, 0.02)",
+                      border: `1px solid ${activeShellId === sh.id ? "rgba(255, 255, 255, 0.2)" : "rgba(255, 255, 255, 0.02)"}`,
                       display: "flex",
+                      justifyContent: "space-between",
                       alignItems: "center",
-                      justifyContent: "space-between"
+                      transition: "all 0.2s ease"
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -663,8 +684,8 @@ export default function App() {
               )}
             </div>
           )}
+          </div>
         </div>
-        )}
       </div>
 
       {/* Main Panel */}

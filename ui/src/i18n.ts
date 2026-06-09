@@ -90,6 +90,8 @@ export const translations = {
     sftpEmpty: "此目录为空",
     sftpRefresh: "刷新",
     clear: "清空",
+    heartbeatActive: "心跳在线",
+    heartbeatTooltip: "前端轮询自动维持会话活跃",
   },
   en: {
     title: "SSH-MCP Console",
@@ -182,6 +184,8 @@ export const translations = {
     sftpEmpty: "This directory is empty",
     sftpRefresh: "Refresh",
     clear: "Clear",
+    heartbeatActive: "Connected",
+    heartbeatTooltip: "Connection is kept alive automatically by Web UI polling",
   }
 };
 

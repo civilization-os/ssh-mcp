@@ -91,3 +91,13 @@ body {
 .xterm-viewport {
   background-color: #000 !important;
 }
+
+@keyframes pulse-glow {
+  0% { opacity: 0.4; filter: drop-shadow(0 0 1px var(--accent-neon)); }
+  50% { opacity: 1; filter: drop-shadow(0 0 5px var(--accent-neon)); }
+  100% { opacity: 0.4; filter: drop-shadow(0 0 1px var(--accent-neon)); }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s infinite ease-in-out;
+}
