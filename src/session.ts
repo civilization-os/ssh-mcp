@@ -7,7 +7,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS_STORE_PATH = path.join(__dirname, "..", "sessions-store.json");
 
-const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
+export const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 
 let nextId = 1;
@@ -268,6 +268,7 @@ export function listSessions(): Omit<Session, "client">[] {
     authType?: "password" | "privateKey";
     hasPassword?: boolean;
     hasPrivateKey?: boolean;
+    idleTimeoutMs: number;
   }> = [];
   for (const session of sessions.values()) {
     const stored = getStoredCredentials(session);
@@ -281,6 +282,7 @@ export function listSessions(): Omit<Session, "client">[] {
       lastUsedAt: session.lastUsedAt,
       kubectlPath: session.kubectlPath,
       kubeconfig: session.kubeconfig,
+      idleTimeoutMs: SESSION_IDLE_TIMEOUT_MS,
       authType: stored?.privateKey ? "privateKey" : stored?.password ? "password" : undefined,
       hasPassword: Boolean(stored?.password),
       hasPrivateKey: Boolean(stored?.privateKey),

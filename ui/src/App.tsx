@@ -12,6 +12,7 @@ interface SshSession {
   username: string;
   createdAt?: number;
   lastUsedAt?: number;
+  idleTimeoutMs?: number;
   kubectlPath?: string;
   kubeconfig?: string;
   authType?: "password" | "privateKey";
@@ -37,6 +38,109 @@ interface SftpFile {
 
 const API_BASE = "http://127.0.0.1:12222";
 const WS_BASE = "ws://127.0.0.1:12222";
+
+const sessionBadgeStyle: React.CSSProperties = {
+  fontSize: "10px",
+  padding: "1px 6px",
+  borderRadius: "4px",
+  background: "rgba(255, 255, 255, 0.05)",
+  border: "1px solid rgba(255, 255, 255, 0.1)",
+  color: "var(--text-secondary)"
+};
+
+function SessionItem({ 
+  sess, 
+  isSelected, 
+  onSelect, 
+  onEdit, 
+  onDelete, 
+  lang 
+}: { 
+  sess: SshSession; 
+  isSelected: boolean; 
+  onSelect: () => void; 
+  onEdit: () => void; 
+  onDelete: () => void;
+  lang: Language;
+}) {
+  const [timeLeft, setTimeLeft] = useState<string>("");
+
+  useEffect(() => {
+    if (!sess.lastUsedAt || !sess.idleTimeoutMs) return;
+
+    const update = () => {
+      const expiresAt = sess.lastUsedAt! + sess.idleTimeoutMs!;
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) {
+        setTimeLeft("Expired");
+        return;
+      }
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      setTimeLeft(`${mins}m ${secs}s`);
+    };
+
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [sess.lastUsedAt, sess.idleTimeoutMs]);
+
+  return (
+    <div
+      onClick={onSelect}
+      style={{
+        padding: "12px",
+        borderRadius: "8px",
+        marginBottom: "8px",
+        cursor: "pointer",
+        background: isSelected ? "rgba(255, 255, 255, 0.08)" : "rgba(255, 255, 255, 0.02)",
+        border: `1px solid ${isSelected ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.05)"}`,
+        transition: "all 0.2s ease"
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>
+        <span style={{ fontWeight: 600, fontSize: "14px", color: isSelected ? "var(--text-primary)" : "var(--text-secondary)" }}>
+          {sess.label}
+        </span>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: "12px" }}
+          >
+            ✎
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: "12px" }}
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+      <div style={{ fontSize: "11px", color: "var(--text-secondary)", opacity: 0.7 }}>
+        {sess.username}@{sess.host}
+      </div>
+      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
+        <span style={sessionBadgeStyle}>{sess.authType === "privateKey" ? translations[lang].authPrivateKeySaved : translations[lang].authPasswordSaved}</span>
+        {sess.kubectlPath && <span style={sessionBadgeStyle}>kubectl</span>}
+        {sess.kubeconfig && <span style={sessionBadgeStyle}>kubeconfig</span>}
+      </div>
+      {timeLeft && (
+        <div style={{ 
+          fontSize: "10px", 
+          marginTop: "6px", 
+          color: timeLeft.includes("m") ? "var(--accent-neon)" : "var(--accent-pink)",
+          opacity: 0.8,
+          display: "flex",
+          justifyContent: "space-between"
+        }}>
+          <span>{lang === "zh" ? "闲置清理倒计时" : "Idle cleanup in"}:</span>
+          <span style={{ fontFamily: "monospace" }}>{timeLeft}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function App() {
   const [sessions, setSessions] = useState<SshSession[]>([]);
@@ -212,13 +316,6 @@ export default function App() {
     }
   };
 
-  // Show confirm dialog instead of deleting directly
-  const handleDeleteSession = (sessionId: string) => {
-    const sess = sessions.find(s => s.id === sessionId);
-    if (!sess) return;
-    setConfirmTarget({ id: sessionId, label: sess.label });
-  };
-
   // Actually execute delete after user confirmed
   const handleConfirmDelete = async () => {
     if (!confirmTarget) return;
@@ -391,82 +488,31 @@ export default function App() {
             </div>
           ) : (
             sessions.map((sess) => (
-              <div
+              <SessionItem
                 key={sess.id}
-                onClick={() => {
+                sess={sess}
+                isSelected={selectedSessionId === sess.id}
+                lang={lang}
+                onSelect={() => {
                   setSelectedSessionId(sess.id);
                   if (activeShellId && shells.find(s => s.id === activeShellId)?.sessionId !== sess.id) {
                     setActiveShellId("");
                   }
                 }}
-                style={{
-                  padding: "12px 14px",
-                  borderRadius: "8px",
-                  marginBottom: "8px",
-                  cursor: "pointer",
-                  background: selectedSessionId === sess.id ? "rgba(0, 242, 254, 0.08)" : "transparent",
-                  border: `1px solid ${selectedSessionId === sess.id ? "var(--accent-blue)" : "transparent"}`,
-                  transition: "all 0.2s ease",
-                  position: "relative"
+                onEdit={() => {
+                  setEditingSessionId(sess.id);
+                  setSessionNameInput(sess.label);
+                  setHostInput(sess.host);
+                  setPortInput(String(sess.port));
+                  setUsernameInput(sess.username);
+                  setKubectlPathInput(sess.kubectlPath || "");
+                  setKubeconfigInput(sess.kubeconfig || "");
+                  setInitialAuthMethod(sess.authType || "password");
+                  setAuthMethodInput(sess.authType || "password");
+                  setShowCreateModal(true);
                 }}
-              >
-                <div style={{ fontWeight: 600, fontSize: "14px", color: selectedSessionId === sess.id ? "var(--accent-blue)" : "var(--text-primary)", paddingRight: "24px" }}>
-                  {sess.label}
-                </div>
-                <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
-                  {sess.username}@{sess.host}:{sess.port}
-                </div>
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px", paddingRight: "48px" }}>
-                  <span style={sessionBadgeStyle}>{sess.authType === "privateKey" ? t("authPrivateKeySaved") : t("authPasswordSaved")}</span>
-                  {sess.kubectlPath && <span style={sessionBadgeStyle}>kubectl</span>}
-                  {sess.kubeconfig && <span style={sessionBadgeStyle}>kubeconfig</span>}
-                </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); openEditModal(sess); }}
-                  title={t("editSession")}
-                  style={{
-                    position: "absolute",
-                    top: "8px",
-                    right: "30px",
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--text-secondary)",
-                    cursor: "pointer",
-                    fontSize: "13px",
-                    lineHeight: 1,
-                    padding: "2px 4px",
-                    borderRadius: "4px",
-                    transition: "color 0.2s ease"
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--accent-blue)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
-                >
-                  ✎
-                </button>
-                {/* Delete session button */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDeleteSession(sess.id); }}
-                  title="断开并删除此会话"
-                  style={{
-                    position: "absolute",
-                    top: "8px",
-                    right: "8px",
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--text-secondary)",
-                    cursor: "pointer",
-                    fontSize: "14px",
-                    lineHeight: 1,
-                    padding: "2px 4px",
-                    borderRadius: "4px",
-                    transition: "color 0.2s ease"
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--accent-pink)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
-                >
-                  ✕
-                </button>
-              </div>
+                onDelete={() => setConfirmTarget({ id: sess.id, label: sess.label })}
+              />
             ))
           )}
 
@@ -995,15 +1041,6 @@ export default function App() {
     </div>
   );
 }
-
-const sessionBadgeStyle: React.CSSProperties = {
-  fontSize: "10px",
-  color: "var(--text-secondary)",
-  border: "1px solid rgba(255,255,255,0.08)",
-  background: "rgba(255,255,255,0.03)",
-  borderRadius: "999px",
-  padding: "2px 8px",
-};
 
 interface SelectedSessionViewProps {
   session: SshSession | null;
