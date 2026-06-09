@@ -209,8 +209,15 @@ export async function handleShellWrite(args: SshShellWriteArgs) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' is closed` }], isError: true };
   }
 
+  let payload = args.input ?? args.command ?? "";
+  if (args.command !== undefined && args.pressEnter !== false) {
+    payload += "\n";
+  } else if (args.pressEnter) {
+    payload += "\n";
+  }
+
   return new Promise<ToolResult>((resolve) => {
-    shell.channel.stdin.write(args.input, "utf-8", (err: Error | null | undefined) => {
+    shell.channel.stdin.write(payload, "utf-8", (err: Error | null | undefined) => {
       if (err) {
         resolve({ content: [{ type: "text" as const, text: `Error writing to shell: ${err.message}` }], isError: true });
         return;
@@ -218,7 +225,7 @@ export async function handleShellWrite(args: SshShellWriteArgs) {
       resolve({
         content: [{
           type: "text" as const,
-          text: `Written ${args.input.length} bytes to shell ${args.shellId}`,
+          text: `Written ${payload.length} bytes to shell ${args.shellId}`,
         }],
       });
     });
