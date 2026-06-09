@@ -4,13 +4,18 @@
   "description": "MCP server for SSH remote execution",
   "type": "module",
   "main": "build/index.js",
+  "bin": {
+    "ssh-mcp": "build/index.js"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:ui && tsc",
+    "build:ui": "cd ui && npm install && npm run build",
     "start": "node build/index.js",
     "dev": "tsc --watch"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
+    "sirv": "^3.0.0",
     "ssh2": "^1.16.0",
     "ws": "^8.21.0"
   },
@@ -19,5 +24,9 @@
     "@types/ssh2": "^1.15.0",
     "@types/ws": "^8.18.1",
     "typescript": "^5.7.0"
-  }
+  },
+  "files": [
+    "build",
+    "ui/dist"
+  ]
 }

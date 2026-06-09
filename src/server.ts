@@ -1,4 +1,7 @@
 import http from "http";
+import path from "path";
+import { fileURLToPath } from "url";
+import sirv from "sirv";
 import { WebSocketServer, WebSocket } from "ws";
 import { listSessions, disconnectSession } from "./session.js";
 import {
@@ -7,6 +10,11 @@ import {
   writeInputToShell,
   listActiveShells
 } from "./handlers/shell.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// UI assets are located in the sibling 'ui/dist' folder relative to 'build/'
+const uiDistPath = path.resolve(__dirname, "..", "ui", "dist");
+const serve = sirv(uiDistPath, { dev: false, single: true });
 
 export function startHttpServer(initialPort: number = 12222) {
   let currentPort = initialPort;
@@ -434,9 +442,11 @@ export function startHttpServer(initialPort: number = 12222) {
 
 
 
-    // Default 404
-    res.writeHead(404, { "Content-Type": "text/plain" });
-    res.end("Not Found");
+    // Default: try serving static files from ui/dist
+    serve(req, res, () => {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not Found");
+    });
   });
 
   const wss = new WebSocketServer({ noServer: true });
