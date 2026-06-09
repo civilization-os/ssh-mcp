@@ -96,6 +96,7 @@ export async function loadAndReconnectSessions(): Promise<void> {
         };
         (session as any)._creds = cred;
         sessions.set(session.id, session);
+        registerClientListeners(session.id, client);
         console.error(`[session] Restored SSH: ${cred.label} (${cred.id})`);
       } else if (cred.type === "k8s" && cred.kubeconfigContent) {
         // Restore K8s local session
@@ -127,15 +128,58 @@ export async function loadAndReconnectSessions(): Promise<void> {
 
 // ======== 工具函数 ========
 
+function registerClientListeners(sessionId: string, client: any) {
+  const onDisconnect = (reason: string) => {
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    console.error(`[session] SSH connection for ${sessionId} disconnected: ${reason}`);
+
+    // Clean up shells
+    import("./handlers/shell.js").then(({ cleanShellsBySession }) => {
+      try { cleanShellsBySession(sessionId); } catch {}
+    }).catch(() => {});
+
+    sessions.delete(sessionId);
+    saveSessionsStore();
+  };
+
+  client.on("error", (err: any) => onDisconnect(`error (${err.message})`));
+  client.on("end", () => onDisconnect("end"));
+  client.on("close", () => onDisconnect("close"));
+}
+
 function startCleanup() {
   if (cleanupTimer) return;
-  cleanupTimer = setInterval(() => {
+  cleanupTimer = setInterval(async () => {
     const now = Date.now();
     let changed = false;
+
+    // Dynamically import to check active shells
+    let hasActiveShellsFn: (sid: string) => boolean = () => false;
+    try {
+      const shellModule = await import("./handlers/shell.js");
+      hasActiveShellsFn = shellModule.hasActiveShells;
+    } catch {}
+
     for (const [id, session] of sessions) {
+      // If there are active shells, do not clean up and keep the session active
+      if (hasActiveShellsFn(id)) {
+        session.lastUsedAt = now;
+        continue;
+      }
+
       if (now - session.lastUsedAt > SESSION_IDLE_TIMEOUT_MS) {
         if (session.type === "ssh" && session.client) {
-          try { session.client.end(); } catch { /* ignore */ }
+          try {
+            session.client.removeAllListeners("error");
+            session.client.removeAllListeners("end");
+            session.client.removeAllListeners("close");
+            session.client.end();
+          } catch { /* ignore */ }
+          try {
+            const { cleanShellsBySession } = await import("./handlers/shell.js");
+            cleanShellsBySession(id);
+          } catch {}
         } else if (session.type === "k8s" && session.kubeconfigPath) {
           try { fs.unlinkSync(session.kubeconfigPath); } catch { /* ignore */ }
         }
@@ -229,6 +273,7 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
   (session as any)._creds = storedCred;
 
   sessions.set(session.id, session);
+  registerClientListeners(session.id, client);
   startCleanup();
   saveSessionsStore();
   return session;
@@ -306,7 +351,12 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
   }
 
   const client = await sshConnect(nextCreds, creds.timeout ?? 15000);
-  try { existing.client?.end(); } catch { /* ignore */ }
+  if (existing.client) {
+    existing.client.removeAllListeners("error");
+    existing.client.removeAllListeners("end");
+    existing.client.removeAllListeners("close");
+    try { existing.client.end(); } catch { /* ignore */ }
+  }
 
   existing.client = client;
   existing.label = nextCreds.label;
@@ -319,14 +369,24 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
   (existing as any)._creds = nextCreds;
 
   sessions.set(sessionId, existing);
+  registerClientListeners(sessionId, client);
   saveSessionsStore();
   return existing;
+}
+
+export function touchSession(sessionId: string): boolean {
+  const session = sessions.get(sessionId);
+  if (session) {
+    session.lastUsedAt = Date.now();
+    return true;
+  }
+  return false;
 }
 
 export function getSession(sessionId: string): Session | undefined {
   const session = sessions.get(sessionId);
   if (session) {
-    session.lastUsedAt = Date.now();
+    touchSession(sessionId);
   }
   return session;
 }

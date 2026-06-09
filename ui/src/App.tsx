@@ -148,6 +148,8 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [activeShellId, setActiveShellId] = useState<string>("");
   
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  
   // Navigation Tabs
   const [activeTab, setActiveTab] = useState<"terminal" | "sftp" | "k8s" | "monitor">("terminal");
   
@@ -351,7 +353,20 @@ export default function App() {
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden", background: "var(--bg-gradient)" }}>
       {/* Sidebar */}
-      <div className="glass-panel" style={{ width: "300px", minWidth: "300px", borderRight: "1px solid var(--panel-border)", display: "flex", flexDirection: "column", height: "100%", borderRadius: "0" }}>
+      <div 
+        className="glass-panel" 
+        style={{ 
+          width: sidebarCollapsed ? "0px" : "300px", 
+          minWidth: sidebarCollapsed ? "0px" : "300px", 
+          borderRight: sidebarCollapsed ? "none" : "1px solid var(--panel-border)", 
+          display: "flex", 
+          flexDirection: "column", 
+          height: "100%", 
+          borderRadius: "0",
+          overflow: "hidden",
+          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
+        }}
+      >
         
         {/* Title Bar */}
         <div style={{ padding: "24px 20px", borderBottom: "1px solid var(--panel-border)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -603,7 +618,35 @@ export default function App() {
       </div>
 
       {/* Main Panel */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
+        {/* Sidebar Collapse Toggle Button */}
+        <button
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          style={{
+            position: "absolute",
+            left: "14px",
+            top: "22px",
+            zIndex: 100,
+            width: "28px",
+            height: "28px",
+            borderRadius: "50%",
+            background: "rgba(255, 255, 255, 0.05)",
+            border: "1px solid rgba(255, 255, 255, 0.1)",
+            color: "var(--text-primary)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+            fontSize: "12px",
+            transition: "all 0.2s ease",
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+          onMouseLeave={e => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
+          title={sidebarCollapsed ? (lang === "zh" ? "展开侧边栏" : "Expand Sidebar") : (lang === "zh" ? "收起侧边栏" : "Collapse Sidebar")}
+        >
+          {sidebarCollapsed ? "▶" : "◀"}
+        </button>
         {!selectedSessionId ? (
           <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center" }}>
             <div className="glass-panel" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
@@ -1060,7 +1103,7 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
 
   return (
     <div className="glass-panel" style={{ 
-      margin: "12px 12px 0", 
+      margin: "12px 12px 0 52px", 
       padding: isCollapsed ? "8px 16px" : "14px 16px", 
       borderRadius: "14px",
       transition: "all 0.2s ease"

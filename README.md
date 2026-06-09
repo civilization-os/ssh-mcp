@@ -21,7 +21,6 @@
 | Category | Tools | Description |
 |----------|-------|-------------|
 | **Session** | `ssh_connect`, `k8s_connect`, `ssh_disconnect`, `ssh_sessions` | Persistent SSH or local Kubernetes connection pool |
-| **Execution** | `ssh_exec`, `ssh_script`, `ssh_exec_bg`, `ssh_exec_stop`, `ssh_exec_bg_result` | Run commands with smart timeout. Session mode can auto-convert long-running commands to background. Supports cwd, env, sudo |
 | **SFTP** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Full file operations with recursive directory delete/chmod, mkdir -p support |
 | **Monitoring** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | OS info, process list (sorted by CPU/memory), disk usage |
 | **Interactive Shell** | `ssh_shell`, `ssh_shell_read`, `ssh_shell_write`, `ssh_shell_resize`, `ssh_shell_close` | Full PTY support with `expect` pattern matching, ANSI stripping, `tailLines` snapshots, and `keepAlive` heartbeats |
@@ -78,7 +77,6 @@ This UI bundles:
 - **ANSI Stripping**: Optional stripping of terminal color codes to save tokens and improve AI readability.
 - **Read Cursor**: Prevents `expect` from matching old output from previous commands.
 - **Keep-Alive**: Optional heartbeats (`\x00`) to prevent `TMOUT` session disconnects on strict servers.
-- **Smart Timeout**: `ssh_exec` commands automatically wrap with `nohup`. If a command exceeds the timeout, it converts to a background task.
 
 ### MCP Configuration Examples
 
@@ -118,7 +116,6 @@ src/
 ├── session.ts        # Session manager (persistent connection pool)
 ├── types.ts          # TypeScript interfaces & validators
 └── handlers/
-    ├── exec.ts       # Command execution (exec, script, bg, stop, bg_result)
     ├── sftp.ts       # Full SFTP operations
     ├── shell.ts      # Interactive PTY Shell logic
     ├── system.ts     # System monitoring tools

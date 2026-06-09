@@ -26,13 +26,6 @@ import {
   loadAndReconnectSessions,
 } from "./session.js";
 import {
-  handleExec,
-  handleScript,
-  handleExecBg,
-  handleExecStop,
-  handleExecBgResult,
-} from "./handlers/exec.js";
-import {
   handleReadFile,
   handleWriteFile,
   handleListDir,
@@ -68,8 +61,6 @@ import { startHttpServer } from "./server.js";
 import {
   validateSshConnectArgs,
   validateSshDisconnectArgs,
-  validateSshExecArgs,
-  validateSshScriptArgs,
   validateSshFileReadArgs,
   validateSshFileWriteArgs,
   validateSshFileListArgs,
@@ -81,9 +72,6 @@ import {
   validateSshSysinfoArgs,
   validateSshProcessesArgs,
   validateSshDiskUsageArgs,
-  validateSshExecBgArgs,
-  validateSshExecStopArgs,
-  validateSshExecBgResultArgs,
   validateSshShellArgs,
   validateSshShellWriteArgs,
   validateSshShellReadArgs,
@@ -298,83 +286,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {} },
     },
 
-    // ======== Command Execution ========
-    {
-      name: "ssh_exec",
-      description: "Execute a shell command on a remote server. Supports session mode (sessionId) or direct mode (host/password). Timeout auto-convert to background is only resumable in session mode.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID from ssh_connect" },
-          ...authFields,
-          command: { type: "string", description: "Shell command to execute" },
-          cwd: { type: "string", description: "Working directory for the command" },
-          sudo: { type: "boolean", description: "Execute with sudo", default: false },
-          env: { type: "object", description: "Environment variables to set", additionalProperties: { type: "string" } },
-        },
-        required: ["command"],
-      },
-    },
-    {
-      name: "ssh_script",
-      description: "Execute a multi-line script on a remote server. Uploads to /tmp, runs, and cleans up.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID from ssh_connect" },
-          ...authFields,
-          script: { type: "string", description: "Script content (multi-line)" },
-          interpreter: { type: "string", description: "Interpreter (sh, bash, python, etc.)", default: "sh" },
-          cwd: { type: "string", description: "Working directory for the script" },
-          sudo: { type: "boolean", description: "Execute with sudo", default: false },
-        },
-        required: ["script"],
-      },
-    },
-    {
-      name: "ssh_exec_bg",
-      description: "Run a command in background on the remote server (non-blocking). Session mode only. Returns a runId to check/stop later.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID from ssh_connect (required for bg)" },
-          command: { type: "string", description: "Shell command to execute in background" },
-          cwd: { type: "string", description: "Working directory" },
-          sudo: { type: "boolean", description: "Execute with sudo", default: false },
-          timeout: { type: "number", description: "Startup timeout in milliseconds (default: 30000)", default: 30000 },
-        },
-        required: ["sessionId", "command"],
-      },
-    },
-    {
-      name: "ssh_exec_stop",
-      description: "Stop a background process by runId or PID on the remote server.",
-      inputSchema: {
-        type: "object",
-        oneOf: [
-          { required: ["sessionId", "runId"] },
-          { required: ["sessionId", "pid"] },
-        ],
-        properties: {
-          sessionId: { type: "string", description: "Session ID" },
-          runId: { type: "string", description: "Run ID from ssh_exec_bg (alternative to pid)" },
-          pid: { type: "number", description: "Process PID to kill (alternative to runId)" },
-          force: { type: "boolean", description: "Use kill -9 instead of kill -TERM", default: false },
-        },
-      },
-    },
-    {
-      name: "ssh_exec_bg_result",
-      description: "Check output/status of a background process started with ssh_exec_bg.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID" },
-          runId: { type: "string", description: "Run ID from ssh_exec_bg" },
-        },
-        required: ["sessionId", "runId"],
-      },
-    },
+
 
     // ======== SFTP File Operations ========
     {
@@ -764,41 +676,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: "text", text: `Active sessions (${sessions.length}):\n${lines.join("\n")}` }] };
       }
 
-      // Command Execution
-      case "ssh_exec": {
-        if (!validateSshExecArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "command is required");
-        }
-        return await handleExec(args);
-      }
 
-      case "ssh_script": {
-        if (!validateSshScriptArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "script is required");
-        }
-        return await handleScript(args);
-      }
-
-      case "ssh_exec_bg": {
-        if (!validateSshExecBgArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "sessionId and command are required");
-        }
-        return await handleExecBg(args);
-      }
-
-      case "ssh_exec_stop": {
-        if (!validateSshExecStopArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "sessionId and runId/pid are required");
-        }
-        return await handleExecStop(args);
-      }
-
-      case "ssh_exec_bg_result": {
-        if (!validateSshExecBgResultArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "sessionId and runId are required");
-        }
-        return await handleExecBgResult(args);
-      }
 
       // SFTP
       case "ssh_file_read": {
@@ -964,55 +842,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// --- Startup ---
-
-async function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const tester = net.createServer()
-      .once('error', () => resolve(false))
-      .once('listening', () => {
-        tester.once('close', () => resolve(true)).close();
-      })
-      .listen(port, '127.0.0.1');
-  });
-}
-
 async function main() {
   const port = 12222;
-  const available = await isPortAvailable(port);
 
-  if (!available) {
-    // Slave Mode: Proxy to existing Master
-    console.error(`[Slave] Port ${port} busy, connecting to Master...`);
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/mcp`);
-    
-    ws.on('open', () => {
-      console.error(`[Slave] Connected to Master. Proxying stdio...`);
-      const duplex = createWebSocketStream(ws);
-      process.stdin.pipe(duplex).pipe(process.stdout);
-    });
-    
-    ws.on('error', (err) => {
-      console.error(`[Slave] Connection error: ${err.message}`);
-      process.exit(1);
-    });
-    
-    ws.on('close', () => {
-      console.error(`[Slave] Master connection closed.`);
-      process.exit(0);
-    });
-    return;
-  }
+  // Start HTTP server. If port 12222 is busy, startHttpServer will automatically find the next available port.
+  startHttpServer(port);
 
-  // Master Mode: Normal startup
   const transport = new StdioServerTransport();
-  
-  // Start HTTP server and set up transport handler for slaves
-  const httpServer = startHttpServer(port);
-  (httpServer as any).onMcpTransport = (slaveTransport: any) => {
-    server.connect(slaveTransport).catch(e => console.error("[Master] Slave transport error:", e));
-  };
-
   await server.connect(transport);
 
   // Resolve absolute path to this build file for MCP client config
@@ -1032,10 +868,9 @@ async function main() {
   console.error("╔══════════════════════════════════════════════════════════╗");
   console.error("║              SSH-MCP Server — READY                     ║");
   console.error("╠══════════════════════════════════════════════════════════╣");
-  console.error("║  Mode     : Master (Singleton Backend)                  ║");
   console.error("║  Protocol : stdio (MCP JSON-RPC)                        ║");
-  console.error("║  REST/WS  : http://localhost:12222                      ║");
-  console.error("║  Web UI   : http://localhost:5174                       ║");
+  console.error("║  REST/WS  : http://localhost:12222 (or next available)  ║");
+  console.error("║  Web UI   : http://localhost:12222                      ║");
   console.error("╠══════════════════════════════════════════════════════════╣");
   console.error("║  Add to your MCP client (e.g. Claude Desktop):          ║");
   console.error("╚══════════════════════════════════════════════════════════╝");

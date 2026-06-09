@@ -156,6 +156,9 @@ export function detachWsFromShell(shellId: string, ws: any) {
 export function writeInputToShell(shellId: string, data: string) {
   const shell = shells.get(shellId);
   if (shell && !shell.closed) {
+    import("../session.js").then(({ touchSession }) => {
+      try { touchSession(shell.sessionId); } catch {}
+    }).catch(() => {});
     shell.channel.stdin.write(data, "utf-8");
     return true;
   }
@@ -174,6 +177,15 @@ export function listActiveShells() {
     });
   }
   return result;
+}
+
+export function hasActiveShells(sessionId: string): boolean {
+  for (const shell of shells.values()) {
+    if (shell.sessionId === sessionId && !shell.closed) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // --- Handlers ---
@@ -227,6 +239,9 @@ export async function handleShellCreate(args: SshShellArgs) {
       }
 
       channel.on("data", (data: Buffer) => {
+        import("../session.js").then(({ touchSession }) => {
+          try { touchSession(args.sessionId); } catch {}
+        }).catch(() => {});
         const str = data.toString("utf-8");
         appendBuffer(shell, str);
         shell.wsClients?.forEach(ws => {
@@ -236,6 +251,9 @@ export async function handleShellCreate(args: SshShellArgs) {
       });
 
       channel.stderr.on("data", (data: Buffer) => {
+        import("../session.js").then(({ touchSession }) => {
+          try { touchSession(args.sessionId); } catch {}
+        }).catch(() => {});
         const str = data.toString("utf-8");
         appendBuffer(shell, str);
         shell.wsClients?.forEach(ws => {
@@ -287,6 +305,12 @@ export async function handleShellWrite(args: SshShellWriteArgs) {
   if (!shell) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' not found` }], isError: true };
   }
+
+  try {
+    const { touchSession } = await import("../session.js");
+    touchSession(shell.sessionId);
+  } catch {}
+
   if (shell.closed) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' is closed` }], isError: true };
   }
@@ -336,6 +360,11 @@ export async function handleShellRead(args: SshShellReadArgs) {
   if (!shell) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' not found` }], isError: true };
   }
+
+  try {
+    const { touchSession } = await import("../session.js");
+    touchSession(shell.sessionId);
+  } catch {}
 
   // Optional: wait for output to settle or for a specific pattern
   const waitMs = args.waitMs ?? 0;
