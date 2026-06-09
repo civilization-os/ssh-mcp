@@ -206,6 +206,7 @@ export interface SshShellReadArgs {
   waitMs?: number;
   maxWaitMs?: number;
   peek?: boolean;
+  contentOnly?: boolean;
 }
 
 export interface SshShellResizeArgs {
@@ -358,6 +359,17 @@ export function validateSshShellCloseArgs(args: unknown): args is SshShellCloseA
 
 // ======== Kubernetes Validators ========
 
+export interface SshK8sPodExecArgs {
+  sessionId?: string;
+  namespace: string;
+  pod: string;
+  container?: string;
+  command: string;
+  args?: string[];
+  shell?: boolean;
+  timeout?: number;
+}
+
 export interface SshK8sArthasAttachArgs {
   sessionId?: string;
   command: string;
@@ -378,8 +390,13 @@ export function validateSshK8sPodLogsArgs(args: unknown): boolean {
   return isRecord(args) && typeof args.pod === "string" && typeof args.namespace === "string";
 }
 
-export function validateSshK8sPodExecArgs(args: unknown): boolean {
-  return isRecord(args) && typeof args.pod === "string" && typeof args.namespace === "string" && typeof args.command === "string";
+export function validateSshK8sPodExecArgs(args: unknown): args is SshK8sPodExecArgs {
+  return isRecord(args)
+    && typeof args.pod === "string"
+    && typeof args.namespace === "string"
+    && typeof args.command === "string"
+    && (args.args === undefined || (Array.isArray(args.args) && args.args.every(item => typeof item === "string")))
+    && (args.shell === undefined || typeof args.shell === "boolean");
 }
 
 export function validateSshK8sPodCpArgs(args: unknown): boolean {

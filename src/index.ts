@@ -421,7 +421,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_shell_read",
-      description: "Read buffered output from an interactive shell. Returns a JSON object with 'content', 'status', and 'promptShown'. Supports 'peek' mode and capped waiting.",
+      description: "Read buffered output from an interactive shell. Returns a JSON object by default, or plain shell output when contentOnly=true. Supports peek mode and capped waiting.",
       inputSchema: {
         type: "object",
         properties: {
@@ -431,6 +431,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           waitMs: { type: "number", description: "Wait for N ms of silence before returning (e.g. 500 = wait until output stops)" },
           maxWaitMs: { type: "number", description: "Maximum total time to wait in ms, even if output is still flowing" },
           peek: { type: "boolean", description: "Return current buffer immediately without waiting or clearing" },
+          contentOnly: { type: "boolean", description: "Return only the shell output text instead of a JSON wrapper." },
         },
         required: ["shellId"],
       },
@@ -528,7 +529,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_k8s_pod_exec",
-      description: "Execute a command inside a Kubernetes pod container.",
+      description: "Execute a command inside a Kubernetes pod container. Use shell=true to run through sh -lc, or args for argument-safe execution without manual quoting.",
       inputSchema: {
         type: "object",
         properties: {
@@ -538,7 +539,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           namespace: { type: "string", description: "Kubernetes namespace" },
           pod: { type: "string", description: "Pod name" },
           container: { type: "string", description: "Optional container name" },
-          command: { type: "string", description: "Command to execute inside the container" }
+          command: { type: "string", description: "Executable name, or full shell command text when shell=true" },
+          args: { type: "array", description: "Optional argument list for argument-safe execution", items: { type: "string" } },
+          shell: { type: "boolean", description: "Run command through sh -lc inside the container. Useful for pipes, redirects, and shell syntax.", default: false }
         },
         required: ["namespace", "pod", "command"]
       }

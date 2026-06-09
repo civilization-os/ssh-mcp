@@ -1,6 +1,6 @@
 import { Client } from "ssh2";
 import { resolveClient, getSession } from "../session.js";
-import { ToolResult, SshK8sArthasAttachArgs, Session } from "../types.js";
+import { ToolResult, SshK8sArthasAttachArgs, SshK8sPodExecArgs, Session } from "../types.js";
 import fs from "fs";
 import path from "path";
 
@@ -159,9 +159,18 @@ export async function handleK8sPodLogs(args: any): Promise<ToolResult> {
   return { content: contents, isError: result.exitCode !== 0 };
 }
 
-export async function handleK8sPodExec(args: any): Promise<ToolResult> {
+export async function handleK8sPodExec(args: SshK8sPodExecArgs): Promise<ToolResult> {
   const containerOpt = args.container ? `-c ${args.container}` : "";
-  const baseCmd = `kubectl exec -n ${args.namespace} ${args.pod} ${containerOpt} -- ${args.command}`;
+  let execTarget = "";
+  if (args.shell) {
+    execTarget = `sh -lc ${shellEscape(args.command)}`;
+  } else if (Array.isArray(args.args) && args.args.length > 0) {
+    execTarget = [args.command, ...args.args].map(escapeExecArg).join(" ");
+  } else {
+    execTarget = args.command;
+  }
+
+  const baseCmd = `kubectl exec -n ${args.namespace} ${args.pod} ${containerOpt} -- ${execTarget}`;
   
   const session = args.sessionId ? getSession(args.sessionId) : undefined;
   const cmd = wrapKubectl(session, baseCmd);
@@ -175,6 +184,14 @@ export async function handleK8sPodExec(args: any): Promise<ToolResult> {
     contents.push({ type: "text" as const, text: `STDERR:\n${result.stderr}` });
   }
   return { content: contents, isError: result.exitCode !== 0 };
+}
+
+function escapeExecArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function shellEscape(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 export async function handleK8sPodCp(args: any): Promise<ToolResult> {

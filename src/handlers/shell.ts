@@ -247,6 +247,15 @@ export async function handleShellRead(args: SshShellReadArgs) {
     // Heuristic: check if prompt is likely present (ends with standard prompt chars)
     const promptShown = /[:\w\s~.-]+[@\w\s~.-]+[#$>]\s*$/.test(text.slice(-50));
 
+    if (args.contentOnly) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: text || "(no output)"
+        }]
+      };
+    }
+
     return {
       content: [{
         type: "text" as const,
@@ -287,6 +296,10 @@ export async function handleShellRead(args: SshShellReadArgs) {
     truncated,
     content: text || "(no output)"
   };
+
+  if (args.contentOnly) {
+    return { content: [{ type: "text" as const, text: result.content }] };
+  }
 
   return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
 }
