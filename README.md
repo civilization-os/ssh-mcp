@@ -6,7 +6,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/civilization-os/ssh-mcp/pulls)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-7C3AED.svg)](https://modelcontextprotocol.io)
 
-> AI-powered remote server management via the Model Context Protocol. Persistent SSH sessions, full SFTP operations, system monitoring, and log tools.
+> AI-powered remote server management via the Model Context Protocol. Persistent SSH sessions, full SFTP operations, system monitoring, and interactive Shell (PTY) with built-in UI.
 
 🌐 **Other languages:** [中文](README.zh-CN.md)
 
@@ -14,7 +14,7 @@
 
 ### Overview
 
-**ssh-mcp** is an MCP (Model Context Protocol) server that turns any AI coding agent into a full-featured remote server administration tool. It maintains persistent SSH connections, executes commands, transfers files, monitors system health, and searches logs — all through natural language conversations.
+**ssh-mcp** is an MCP (Model Context Protocol) server that turns any AI coding agent into a full-featured remote server administration tool. It maintains persistent SSH connections, executes commands, transfers files, and monitors system health — all through natural language conversations. It also features a built-in Web UI for visual terminal and file management.
 
 ### Features
 
@@ -24,16 +24,24 @@
 | **Execution** | `ssh_exec`, `ssh_script`, `ssh_exec_bg`, `ssh_exec_stop`, `ssh_exec_bg_result` | Run commands with smart timeout. Session mode can auto-convert long-running commands to background. Supports cwd, env, sudo |
 | **SFTP** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Full file operations with recursive directory delete/chmod, mkdir -p support |
 | **Monitoring** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | OS info, process list (sorted by CPU/memory), disk usage |
-| **Logs** | `ssh_log_tail`, `ssh_log_search` | View log tails, grep with context |
+| **Interactive Shell** | `ssh_shell`, `ssh_shell_read`, `ssh_shell_write`, `ssh_shell_resize`, `ssh_shell_close` | Full PTY support with `expect` pattern matching, ANSI stripping, `tailLines` snapshots, and `keepAlive` heartbeats |
 
 ### Quick Start
 
-#### Prerequisites
+#### Option 1: Use `npx` (Easiest, No Install)
 
-- Node.js >= 18
-- npm
+No need to clone the repo. Just use `npx` in your MCP client config. This always uses the latest version.
 
-#### Install
+```json
+"mcpServers": {
+  "ssh-mcp": {
+    "command": "npx",
+    "args": ["-y", "github:civilization-os/ssh-mcp"]
+  }
+}
+```
+
+#### Option 2: Local Install
 
 ```bash
 git clone https://github.com/civilization-os/ssh-mcp.git
@@ -42,175 +50,72 @@ npm install
 npm run build
 ```
 
-#### Usage Examples
+Then point your MCP client to `/absolute/path/to/ssh-mcp/build/index.js`.
 
-**Session mode** (recommended — reuse connection):
+### Dashboard UI
 
-```
-ssh_connect  host="192.168.1.1"  username="root"  password="xxx"  kubectlPath="/usr/local/bin/kubectl"  kubeconfig="/root/.kube/config"
-→ Session created: sess_xxx
+Once the MCP server is started by your client (Claude, Cursor, etc.), the built-in UI is automatically available at:
 
-ssh_exec     sessionId="sess_xxx"  command="top -b -n 1 | head -5"
-ssh_file_write sessionId="sess_xxx"  path="/tmp/test.txt"  content="hello world"
-ssh_sysinfo  sessionId="sess_xxx"
-ssh_disconnect sessionId="sess_xxx"
-```
+👉 **[http://localhost:12222](http://localhost:12222)**
 
-**Stateless mode** (credentials per call):
+This UI bundles:
+- **💻 Terminal (WebShell)**: Interactive PTY console with live color rendering.
+- **📂 Files (SFTP Explorer)**: Visual file navigator for remote directory trees.
+- **☸️ Kubernetes**: Pod management, real-time logs, and Arthas diagnostic panel.
+- **📊 Monitoring**: Real-time server load statistics and process monitoring.
 
-```
-ssh_exec  host="192.168.1.1"  username="root"  password="xxx"  command="whoami"
-```
+### Smart Features for Agents
 
-For Kubernetes-related tools, `ssh_connect` also accepts these optional fields:
+- **`expect` Matching**: `ssh_shell_read` can wait for a specific regex pattern (like a prompt) before returning.
+- **ANSI Stripping**: Optional stripping of terminal color codes to save tokens and improve AI readability.
+- **Read Cursor**: Prevents `expect` from matching old output from previous commands.
+- **Keep-Alive**: Optional heartbeats (`\x00`) to prevent `TMOUT` session disconnects on strict servers.
+- **Smart Timeout**: `ssh_exec` commands automatically wrap with `nohup`. If a command exceeds the timeout, it converts to a background task.
 
-- `kubectlPath`: custom `kubectl` binary path on the remote host
-- `kubeconfig`: custom kubeconfig path on the remote host
-
-If omitted, the server will try to auto-detect both on the remote host.
-
-#### Smart Timeout
-
-All `ssh_exec` commands automatically wrap with `nohup`. In session mode, if a command exceeds the timeout (default 10 min), it converts to a background task and returns a `runId` so you can:
-
-- Check output: `ssh_exec_bg_result sessionId="..." runId="bg_xxx"`
-- Stop it: `ssh_exec_stop sessionId="..." runId="bg_xxx"`
-
-In direct mode, timed-out commands still keep running remotely, but resumable follow-up via `runId` is not available. Use `ssh_connect` first if you need to manage long-running tasks.
-
-### MCP Configuration by Client
+### MCP Configuration Examples
 
 #### Claude Desktop / Claude Code
 
 `.mcp.json`:
-
 ```json
 {
   "mcpServers": {
-    "ssh": {
-      "command": "node",
-      "args": ["/absolute/path/to/ssh-mcp/build/index.js"]
+    "ssh-mcp": {
+      "command": "npx",
+      "args": ["-y", "github:civilization-os/ssh-mcp"]
     }
   }
 }
 ```
 
-Or via CLI:
+#### Cursor / Windsurf / Continue / OpenCode
 
-```bash
-claude mcp add ssh -- node /path/to/ssh-mcp/build/index.js
-```
-
-#### Cursor
-
-In Cursor settings → Features → MCP Servers → Add:
+Replace `/path/to/` with your actual build path if installing locally.
 
 ```json
 {
-  "name": "ssh",
+  "name": "ssh-mcp",
   "type": "command",
   "command": "node",
   "args": ["/path/to/ssh-mcp/build/index.js"]
 }
 ```
 
-#### Windsurf
-
-In `.windsurf/config.json` or global MCP config:
-
-```json
-{
-  "mcpServers": {
-    "ssh": {
-      "command": "node",
-      "args": ["/path/to/ssh-mcp/build/index.js"]
-    }
-  }
-}
-```
-
-#### Continue (VS Code / JetBrains)
-
-`~/.continue/config.json`:
-
-```json
-{
-  "experimental": {
-    "mcpServers": {
-      "ssh": {
-        "command": "node",
-        "args": ["/path/to/ssh-mcp/build/index.js"]
-      }
-    }
-  }
-}
-```
-
-#### OpenCode
-
-In OpenCode config:
-
-```json
-{
-  "mcpServers": {
-    "ssh": {
-      "command": "node",
-      "args": ["/path/to/ssh-mcp/build/index.js"]
-    }
-  }
-}
-```
-
-> **Note:** All clients above follow the same [MCP stdio protocol](https://modelcontextprotocol.io). The only difference is where the config file lives. Replace `/path/to/ssh-mcp/` with your actual install directory.
-
-### Dashboard UI
-
-To provide a more intuitive and visual terminal-cooperation workflow, this project embeds a modern, glassmorphic UI dashboard.
-
-#### Core Panels
-1. **💻 Terminal (WebShell)**: An interactive pseudo-terminal (PTY) console supporting keyboard inputs and live ANSI color code rendering.
-2. **📂 Files (SFTP Explorer)**: A visual file navigator allowing you to browse the remote directory tree, double-click into folders, and navigate back.
-3. **☸️ Kubernetes**: Lists Pods across namespaces, displays real-time logs, executes commands, and copies files. Features a built-in **Arthas container diagnostician panel** that operates in **Offline Mode** (bundling its own assets and JDK without requiring internet access). Includes **Smart K8s Discovery** to automatically find `kubeconfig` and `kubectl` paths, with UI fields for manual overrides.
-4. **📊 Monitoring**: Displays real-time server load statistics (CPU, Memory, Disk) and active processes sorted by CPU/Memory utilization.
-5. **🔌 Connection Manager**: Allows you to click the `+` button in the sidebar to fill in host, port, username, and authentication credentials (password/private key) to launch new SSH sessions directly from the UI.
-
-#### Local Development & Testing
-
-To test the visual dashboard with a local mock environment:
-
-##### 1. Compile & launch mock backend
-```bash
-npm run build
-node run_local_mock.mjs
-```
-This launches a mock SSH server (port `22222`), spawns the REST API backend (port `12222`), and seeds an active session named `Mock-Server-Local`.
-
-##### 2. Start the Vite UI Server
-```bash
-cd ui
-npm run dev
-```
-Open `http://localhost:5174/` in your browser.
-
-##### 3. Using the UI
-You can immediately view the pre-seeded mock environment or click the **`+`** button next to `SSH Sessions` (or follow the empty state guide card) to input real server credentials and establish direct connections. Once selected, all four tabs will dynamically reload to target the new session context.
-
 ### Architecture
 
 ```
 src/
 ├── index.ts          # Entry: server init, tool registration, request routing
+├── server.ts         # HTTP Server: REST API, WebSockets, and Static UI hosting
 ├── session.ts        # Session manager (persistent connection pool)
 ├── types.ts          # TypeScript interfaces & validators
 └── handlers/
     ├── exec.ts       # Command execution (exec, script, bg, stop, bg_result)
     ├── sftp.ts       # Full SFTP operations
-    └── system.ts     # System monitoring & log tools
+    ├── shell.ts      # Interactive PTY Shell logic
+    ├── system.ts     # System monitoring tools
+    └── k8s.ts        # Kubernetes pod management
 ```
-
-Dual-mode design:
-- **Session mode**: `ssh_connect` first → returns `sessionId` → reuse across calls
-- **Stateless mode**: Pass `host`/`username`/`password` with every call
 
 ### License
 
