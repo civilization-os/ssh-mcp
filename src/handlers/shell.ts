@@ -126,6 +126,7 @@ export function cleanShellsBySession(sessionId: string) {
         try { shell.channel.close(); } catch { /* ignore */ }
       }
       shells.delete(id);
+      shellEvents.emit("close", id);
     }
   }
 }
@@ -252,6 +253,9 @@ export async function handleShellCreate(args: SshShellArgs) {
         shell.wsClients?.forEach(ws => {
           if (ws.readyState === 1) ws.send("\r\n[Shell session closed]\r\n");
         });
+        // Emit one last data event so subscribers read the CLOSED state, then emit close
+        shellEvents.emit("data", shellId);
+        shellEvents.emit("close", shellId);
       });
 
       channel.on("error", (err: Error) => {
@@ -422,6 +426,7 @@ export async function handleShellClose(args: SshShellCloseArgs) {
     clearInterval(shell.heartbeatTimer);
   }
   shells.delete(args.shellId);
+  shellEvents.emit("close", args.shellId);
 
   return {
     content: [{

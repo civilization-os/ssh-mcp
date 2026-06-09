@@ -6,6 +6,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
   SubscribeRequestSchema,
   UnsubscribeRequestSchema,
@@ -127,16 +128,32 @@ const server = new Server(
 
 // --- Resource definitions ---
 
-server.setRequestHandler(ListResourcesRequestSchema, async () => {
+server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
   return {
-    resources: [
+    resourceTemplates: [
       {
-        uri: "mcp://ssh/shell/{shellId}/output",
+        uriTemplate: "mcp://ssh/shell/{shellId}/output",
         name: "Interactive Shell Output Stream",
-        description: "Real-time incremental output from a PTY shell session",
-        mimeType: "text/plain",
+        description: "Real-time incremental output and status from a PTY shell session",
+        mimeType: "application/json",
       }
     ],
+  };
+});
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  // Use handleShellList directly but we need the raw list to avoid parsing the text result.
+  // Instead, let's just fetch it via our helper in shell.ts.
+  const { listActiveShells } = await import("./handlers/shell.js");
+  const shells = listActiveShells();
+  
+  return {
+    resources: shells.map(s => ({
+      uri: `mcp://ssh/shell/${s.id}/output`,
+      name: `Shell Output (${s.id})`,
+      description: `Output stream for shell ${s.id} (Session: ${s.sessionId})`,
+      mimeType: "application/json",
+    })),
   };
 });
 
@@ -150,11 +167,12 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const shellId = match[1];
   const result = await handleShellRead({ shellId, peek: true } as any);
   
+  // result.content[0].text contains a JSON string of the shell status and output
   return {
     contents: [
       {
         uri,
-        mimeType: "text/plain",
+        mimeType: "application/json",
         text: (result as any).content[0].text,
       }
     ],
@@ -184,6 +202,12 @@ shellEvents.on("data", (shellId: string) => {
       params: { uri },
     });
   }
+});
+
+// Clean up subscriptions when shell is closed/destroyed
+shellEvents.on("close", (shellId: string) => {
+  const uri = `mcp://ssh/shell/${shellId}/output`;
+  activeSubscriptions.delete(uri);
 });
 
 // --- Tool definitions ---
