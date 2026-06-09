@@ -114,7 +114,7 @@ const sessionAuthFields = {
 // --- Server ---
 
 const server = new Server(
-  { name: "ssh-mcp", version: "2.0.0" },
+  { name: "ssh-mcp", version: "1.0.0" },
   { capabilities: { tools: {} } }
 );
 
