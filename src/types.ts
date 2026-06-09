@@ -19,7 +19,8 @@ export interface SshCredentials {
 
 export interface Session {
   id: string;
-  client: Client;
+  type: 'ssh' | 'k8s';
+  client?: Client;
   label: string;
   host: string;
   port: number;
@@ -29,12 +30,18 @@ export interface Session {
   // K8s specific config
   kubectlPath?: string;
   kubeconfig?: string;
+  kubeconfigPath?: string;
 }
 
 // --- Tool argument types ---
 
 export interface SshConnectArgs extends SshCredentials {
   name?: string;
+}
+
+export interface K8sConnectArgs {
+  name?: string;
+  kubeconfig: string; // YAML content or local path
 }
 
 export interface SshDisconnectArgs {
@@ -350,6 +357,10 @@ export interface SshK8sArthasAttachArgs {
 
 export function validateSshK8sArthasAttachArgs(args: unknown): args is SshK8sArthasAttachArgs {
   return isRecord(args) && typeof args.command === "string";
+}
+
+export function validateK8sConnectArgs(args: unknown): args is K8sConnectArgs {
+  return isRecord(args) && typeof args.kubeconfig === "string";
 }
 
 export function validateSshK8sPodLogsArgs(args: unknown): boolean {

@@ -176,9 +176,10 @@ export function listActiveShells() {
 
 export async function handleShellCreate(args: SshShellArgs) {
   const session = getSession(args.sessionId);
-  if (!session) {
-    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found` }], isError: true };
+  if (!session || session.type !== "ssh" || !session.client) {
+    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found or is not an SSH session` }], isError: true };
   }
+  const client = session.client;
 
   const shellId = generateShellId();
   const cols = args.cols ?? 120;
@@ -188,7 +189,7 @@ export async function handleShellCreate(args: SshShellArgs) {
   return new Promise<ToolResult>((resolve) => {
     const ptyOpts: PseudoTtyOptions = { term, cols, rows };
 
-    session.client.shell(ptyOpts, (err: Error | undefined, channel: ClientChannel) => {
+    client.shell(ptyOpts, (err: Error | undefined, channel: ClientChannel) => {
       if (err) {
         resolve({ content: [{ type: "text" as const, text: `Error creating shell: ${err.message}` }], isError: true });
         return;

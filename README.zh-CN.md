@@ -20,11 +20,19 @@
 
 | 分类 | 工具 | 功能说明 |
 |------|------|----------|
-| **会话管理** | `ssh_connect`, `ssh_disconnect`, `ssh_sessions` | 持久化连接池，30 分钟空闲自动清理 |
+| **会话管理** | `ssh_connect`, `k8s_connect`, `ssh_disconnect`, `ssh_sessions` | 持久化 SSH 或本地 Kubernetes 连接池 |
 | **命令执行** | `ssh_exec`, `ssh_script`, `ssh_exec_bg`, `ssh_exec_stop`, `ssh_exec_bg_result` | 运行命令，支持 cwd/env/sudo。智能超时可自动转后台 |
 | **文件操作** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | 完整 SFTP 功能：读写、上传、递归删除、权限管理等 |
 | **系统监控** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | 系统信息、进程列表（按 CPU/内存排序）、磁盘使用 |
 | **交互式 Shell** | `ssh_shell`, `ssh_shell_read`, `ssh_shell_write`, `ssh_shell_resize`, `ssh_shell_close` | 完整 PTY 支持，具备 `expect` 模式匹配、ANSI 剥离、`tailLines` 快照及 `keepAlive` 心跳 |
+| **Kubernetes** | `ssh_k8s_list_pods`, `ssh_k8s_pod_logs`, `ssh_k8s_pod_exec`, `ssh_k8s_pod_cp`, `ssh_k8s_arthas_attach` | 完整的 Pod 管理及基于 Arthas 的 Java 诊断。支持本地或远程执行。 |
+
+### Kubernetes 多执行引擎 (v2.0)
+
+`ssh-mcp` v2.0 引入了 **Multi-Executor** 架构。这解决了在严苛的 PaaS 环境中，SSH 用户缺乏 root/kubectl 权限的问题。
+
+1.  **远程执行 (SSH)**：默认模式。通过 SSH 连接并执行远程宿主机上的 `kubectl`。
+2.  **本地执行 (Direct)**：使用 `k8s_connect` 并提供您的 `kubeconfig` 内容。MCP 服务器将在本地运行 `kubectl` 直接管理集群，完全绕过 SSH。这对于只能通过 PaaS WebShell 登录 Root 的场景非常有效。
 
 ### 快速开始
 

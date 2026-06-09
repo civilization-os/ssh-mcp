@@ -1,11 +1,18 @@
 import { Client, ConnectConfig } from "ssh2";
-import { Session, SshCredentials } from "./types.js";
+import { Session, SshCredentials, K8sConnectArgs } from "./types.js";
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS_STORE_PATH = path.join(__dirname, "..", "sessions-store.json");
+const KUBECONFIG_DIR = path.join(os.tmpdir(), "ssh-mcp-kubeconfigs");
+
+// Ensure temp directory exists
+if (!fs.existsSync(KUBECONFIG_DIR)) {
+  fs.mkdirSync(KUBECONFIG_DIR, { recursive: true });
+}
 
 export const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 min
@@ -16,6 +23,7 @@ const sessions = new Map<string, Session>();
 // 凭据持久化存储结构
 interface StoredCredentials {
   id: string;
+  type: "ssh" | "k8s";
   label: string;
   host: string;
   port: number;
@@ -25,6 +33,7 @@ interface StoredCredentials {
   passphrase?: string;
   kubectlPath?: string;
   kubeconfig?: string;
+  kubeconfigContent?: string;
 }
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -70,23 +79,44 @@ export async function loadAndReconnectSessions(): Promise<void> {
 
   for (const cred of stored) {
     try {
-      const client = await sshConnect(cred, 10000);
-      const session: Session = {
-        id: cred.id,
-        client,
-        label: cred.label,
-        host: cred.host,
-        port: cred.port,
-        username: cred.username,
-        createdAt: Date.now(),
-        lastUsedAt: Date.now(),
-        kubectlPath: cred.kubectlPath,
-        kubeconfig: cred.kubeconfig,
-      };
-      (session as any)._creds = cred;
-      sessions.set(session.id, session);
+      if (cred.type === "ssh") {
+        const client = await sshConnect(cred, 10000);
+        const session: Session = {
+          id: cred.id,
+          type: "ssh",
+          client,
+          label: cred.label,
+          host: cred.host,
+          port: cred.port,
+          username: cred.username,
+          createdAt: Date.now(),
+          lastUsedAt: Date.now(),
+          kubectlPath: cred.kubectlPath,
+          kubeconfig: cred.kubeconfig,
+        };
+        (session as any)._creds = cred;
+        sessions.set(session.id, session);
+        console.error(`[session] Restored SSH: ${cred.label} (${cred.id})`);
+      } else if (cred.type === "k8s" && cred.kubeconfigContent) {
+        // Restore K8s local session
+        const k8sPath = path.join(KUBECONFIG_DIR, `kubeconfig_${cred.id}`);
+        fs.writeFileSync(k8sPath, cred.kubeconfigContent, "utf-8");
+        const session: Session = {
+          id: cred.id,
+          type: "k8s",
+          label: cred.label,
+          host: "localhost",
+          port: 0,
+          username: "local",
+          createdAt: Date.now(),
+          lastUsedAt: Date.now(),
+          kubeconfigPath: k8sPath,
+        };
+        (session as any)._creds = cred;
+        sessions.set(session.id, session);
+        console.error(`[session] Restored K8s: ${cred.label} (${cred.id})`);
+      }
       startCleanup();
-      console.error(`[session] Restored: ${cred.label} (${cred.id})`);
     } catch (e: any) {
       console.error(`[session] Failed to restore ${cred.label}: ${e.message}`);
     }
@@ -104,7 +134,11 @@ function startCleanup() {
     let changed = false;
     for (const [id, session] of sessions) {
       if (now - session.lastUsedAt > SESSION_IDLE_TIMEOUT_MS) {
-        try { session.client.end(); } catch { /* ignore */ }
+        if (session.type === "ssh" && session.client) {
+          try { session.client.end(); } catch { /* ignore */ }
+        } else if (session.type === "k8s" && session.kubeconfigPath) {
+          try { fs.unlinkSync(session.kubeconfigPath); } catch { /* ignore */ }
+        }
         sessions.delete(id);
         changed = true;
       }
@@ -117,8 +151,8 @@ function startCleanup() {
   }, CLEANUP_INTERVAL_MS);
 }
 
-function generateId(): string {
-  return `sess_${Date.now()}_${nextId++}`;
+function generateId(prefix: string = "sess"): string {
+  return `${prefix}_${Date.now()}_${nextId++}`;
 }
 
 export function buildConnectConfig(creds: Partial<SshCredentials>): ConnectConfig {
@@ -166,6 +200,7 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
   const id = generateId();
   const session: Session = {
     id,
+    type: "ssh",
     client,
     label: label ?? `${creds.username ?? "root"}@${creds.host}:${creds.port ?? 22}`,
     host: creds.host ?? "unknown",
@@ -180,6 +215,7 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
   // 存储凭据供持久化使用
   const storedCred: StoredCredentials = {
     id,
+    type: "ssh",
     label: session.label,
     host: session.host,
     port: session.port,
@@ -198,10 +234,51 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
   return session;
 }
 
+export async function createK8sSession(args: K8sConnectArgs): Promise<Session> {
+  const id = generateId("k8s");
+  const k8sPath = path.join(KUBECONFIG_DIR, `kubeconfig_${id}`);
+  
+  let kubeconfigContent = args.kubeconfig;
+  // If it looks like a file path and exists, read it
+  if (args.kubeconfig.length < 512 && fs.existsSync(args.kubeconfig)) {
+    kubeconfigContent = fs.readFileSync(args.kubeconfig, "utf-8");
+  }
+  
+  fs.writeFileSync(k8sPath, kubeconfigContent, "utf-8");
+
+  const session: Session = {
+    id,
+    type: "k8s",
+    label: args.name ?? "Local K8s Cluster",
+    host: "localhost",
+    port: 0,
+    username: "local",
+    createdAt: Date.now(),
+    lastUsedAt: Date.now(),
+    kubeconfigPath: k8sPath,
+  };
+
+  const storedCred: StoredCredentials = {
+    id,
+    type: "k8s",
+    label: session.label,
+    host: session.host,
+    port: session.port,
+    username: session.username,
+    kubeconfigContent,
+  };
+  (session as any)._creds = storedCred;
+
+  sessions.set(id, session);
+  startCleanup();
+  saveSessionsStore();
+  return session;
+}
+
 export async function updateSession(sessionId: string, creds: Partial<SshCredentials>, label?: string): Promise<Session> {
   const existing = sessions.get(sessionId);
-  if (!existing) {
-    throw new Error(`Session '${sessionId}' not found`);
+  if (!existing || existing.type !== "ssh") {
+    throw new Error(`SSH Session '${sessionId}' not found`);
   }
 
   const stored = getStoredCredentials(existing);
@@ -229,7 +306,7 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
   }
 
   const client = await sshConnect(nextCreds, creds.timeout ?? 15000);
-  try { existing.client.end(); } catch { /* ignore */ }
+  try { existing.client?.end(); } catch { /* ignore */ }
 
   existing.client = client;
   existing.label = nextCreds.label;
@@ -257,7 +334,13 @@ export function getSession(sessionId: string): Session | undefined {
 export function disconnectSession(sessionId: string): boolean {
   const session = sessions.get(sessionId);
   if (!session) return false;
-  try { session.client.end(); } catch { /* ignore */ }
+  
+  if (session.type === "ssh" && session.client) {
+    try { session.client.end(); } catch { /* ignore */ }
+  } else if (session.type === "k8s" && session.kubeconfigPath) {
+    try { fs.unlinkSync(session.kubeconfigPath); } catch { /* ignore */ }
+  }
+
   sessions.delete(sessionId);
   saveSessionsStore();
   return true;
@@ -265,7 +348,7 @@ export function disconnectSession(sessionId: string): boolean {
 
 export function listSessions(): Omit<Session, "client">[] {
   const result: Array<Omit<Session, "client"> & {
-    authType?: "password" | "privateKey";
+    authType?: "password" | "privateKey" | "k8s";
     hasPassword?: boolean;
     hasPrivateKey?: boolean;
     idleTimeoutMs: number;
@@ -274,6 +357,7 @@ export function listSessions(): Omit<Session, "client">[] {
     const stored = getStoredCredentials(session);
     result.push({
       id: session.id,
+      type: session.type,
       label: session.label,
       host: session.host,
       port: session.port,
@@ -282,8 +366,9 @@ export function listSessions(): Omit<Session, "client">[] {
       lastUsedAt: session.lastUsedAt,
       kubectlPath: session.kubectlPath,
       kubeconfig: session.kubeconfig,
+      kubeconfigPath: session.kubeconfigPath,
       idleTimeoutMs: SESSION_IDLE_TIMEOUT_MS,
-      authType: stored?.privateKey ? "privateKey" : stored?.password ? "password" : undefined,
+      authType: session.type === "k8s" ? "k8s" : stored?.privateKey ? "privateKey" : stored?.password ? "password" : undefined,
       hasPassword: Boolean(stored?.password),
       hasPrivateKey: Boolean(stored?.privateKey),
     });
@@ -299,6 +384,9 @@ export async function resolveClient(
   if (args.sessionId) {
     const session = getSession(args.sessionId);
     if (!session) throw new Error(`Session '${args.sessionId}' not found or expired`);
+    if (session.type !== "ssh" || !session.client) {
+      throw new Error(`Session '${args.sessionId}' is not an SSH session`);
+    }
     return fn(session.client);
   }
   // Stateless mode: connect, execute, disconnect

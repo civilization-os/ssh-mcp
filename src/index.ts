@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 
 import {
   createSession,
+  createK8sSession,
   disconnectSession,
   listSessions,
   loadAndReconnectSessions,
@@ -80,6 +81,7 @@ import {
   validateSshShellReadArgs,
   validateSshShellResizeArgs,
   validateSshShellCloseArgs,
+  validateK8sConnectArgs,
   validateSshK8sListPodsArgs,
   validateSshK8sPodLogsArgs,
   validateSshK8sPodExecArgs,
@@ -114,7 +116,7 @@ const sessionAuthFields = {
 // --- Server ---
 
 const server = new Server(
-  { name: "ssh-mcp", version: "1.0.0" },
+  { name: "ssh-mcp", version: "2.0.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -134,6 +136,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           ...k8sConfigFields,
         },
         required: ["host"],
+      },
+    },
+    {
+      name: "k8s_connect",
+      description: "Register a local Kubernetes session using a kubeconfig. Commands will be executed locally on the MCP server host.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Optional label for the session" },
+          kubeconfig: { type: "string", description: "Kubeconfig YAML content or local file path" },
+        },
+        required: ["kubeconfig"],
       },
     },
     {
@@ -572,6 +586,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               `  Label: ${session.label}`,
               `  Host:  ${session.host}:${session.port}`,
               `  User:  ${session.username}`,
+            ].join("\n"),
+          }],
+        };
+      }
+
+      case "k8s_connect": {
+        if (!validateK8sConnectArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "kubeconfig is required");
+        }
+        const session = await createK8sSession(args);
+        return {
+          content: [{
+            type: "text",
+            text: [
+              `K8s Session created: ${session.id}`,
+              `  Label: ${session.label}`,
             ].join("\n"),
           }],
         };

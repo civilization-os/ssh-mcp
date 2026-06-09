@@ -223,10 +223,11 @@ export async function handleExecBg(args: SshExecBgArgs): Promise<{ content: { ty
   }
 
   const session = getSession(args.sessionId);
-  if (!session) {
-    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found` }], isError: true };
+  if (!session || session.type !== "ssh" || !session.client) {
+    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found or is not an SSH session` }], isError: true };
   }
 
+  const client = session.client;
   const runId = generateRunId();
   const outFile = `/tmp/.mcp_bg_${runId}.out`;
   const pidFile = `/tmp/.mcp_bg_${runId}.pid`;
@@ -250,7 +251,7 @@ export async function handleExecBg(args: SshExecBgArgs): Promise<{ content: { ty
       });
     }, timeout);
 
-    session.client.exec(wrapped, (err: Error | undefined, channel: ClientChannel) => {
+    client.exec(wrapped, (err: Error | undefined, channel: ClientChannel) => {
       clearTimeout(timer);
       if (err) {
         resolve({ content: [{ type: "text" as const, text: `Error: ${err.message}` }], isError: true });
@@ -261,7 +262,7 @@ export async function handleExecBg(args: SshExecBgArgs): Promise<{ content: { ty
       channel.on("data", (data: Buffer) => { pidOutput += data.toString(); });
       channel.on("close", () => {
         // Read back the PID
-        session.client.exec(`cat ${pidFile} 2>/dev/null`, (_e2, ch2) => {
+        client.exec(`cat ${pidFile} 2>/dev/null`, (_e2, ch2) => {
           let pidStr = "";
           ch2.on("data", (d: Buffer) => { pidStr += d.toString(); });
           ch2.on("close", () => {
@@ -304,9 +305,10 @@ export async function handleExecBg(args: SshExecBgArgs): Promise<{ content: { ty
 
 export async function handleExecStop(args: SshExecStopArgs): Promise<{ content: { type: string; text: string }[]; isError?: boolean }> {
   const session = getSession(args.sessionId);
-  if (!session) {
-    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found` }], isError: true };
+  if (!session || session.type !== "ssh" || !session.client) {
+    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found or is not an SSH session` }], isError: true };
   }
+  const client = session.client;
 
   let pid: number | null = null;
   let runInfo = "";
@@ -330,7 +332,7 @@ export async function handleExecStop(args: SshExecStopArgs): Promise<{ content: 
   const sig = args.force ? "-9" : "-TERM";
 
   return new Promise((resolve) => {
-    session.client.exec(`kill ${sig} ${pid} 2>&1; echo "exit:$?"`, (err: Error | undefined, channel: ClientChannel) => {
+    client.exec(`kill ${sig} ${pid} 2>&1; echo "exit:$?"`, (err: Error | undefined, channel: ClientChannel) => {
       if (err) {
         resolve({ content: [{ type: "text" as const, text: `Error: ${err.message}` }], isError: true });
         return;
@@ -348,16 +350,17 @@ export async function handleExecStop(args: SshExecStopArgs): Promise<{ content: 
 
 export async function handleExecBgResult(args: SshExecBgResultArgs): Promise<{ content: { type: string; text: string }[]; isError?: boolean }> {
   const session = getSession(args.sessionId);
-  if (!session) {
-    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found` }], isError: true };
+  if (!session || session.type !== "ssh" || !session.client) {
+    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found or is not an SSH session` }], isError: true };
   }
+  const client = session.client;
 
   const run = bgRuns.get(args.runId);
   // Use stored outFile if available (from smart timeout), else use standard bg path
   const outFile = run?.outFile ?? `/tmp/.mcp_bg_${args.runId}.out`;
 
   return new Promise((resolve) => {
-    session.client.exec(`cat ${outFile} 2>/dev/null; echo "---EXIT:---"; kill -0 ${run?.pid ?? 0} 2>/dev/null && echo "running" || echo "done"`, (err, channel) => {
+    client.exec(`cat ${outFile} 2>/dev/null; echo "---EXIT:---"; kill -0 ${run?.pid ?? 0} 2>/dev/null && echo "running" || echo "done"`, (err, channel) => {
       if (err) {
         resolve({ content: [{ type: "text" as const, text: `Error: ${err.message}` }], isError: true });
         return;
