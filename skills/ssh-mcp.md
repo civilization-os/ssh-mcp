@@ -1,102 +1,81 @@
 ---
 name: ssh-mcp
-description: 🔧 SSH 远程服务器管理 MCP — 工具速查与使用指南
+description: 🔧 SSH 远程管理与流式 PTY 专家指令集
 ---
 
-# 🔧 ssh-mcp — SSH Remote Server Management
+# 🔧 ssh-mcp — AI 专家操作指南
 
-一个 MCP 服务器，提供 SSH 远程连接、命令执行、文件传输、系统监控和日志查看功能。
+本指南旨在强化 AI 模型使用 `ssh-mcp` 工具集的能力，确保在远程服务器管理、Kubernetes 运维和交互式调试中采用最佳实践。
 
-## 连接模式
+## 🧠 决策逻辑：人机协作优先
 
-**Session 模式（推荐多步操作）**：先用 `ssh_connect` 建立会话，返回 `sessionId`，后续操作复用该 ID。
+### 🌟 强烈推荐：`ssh_shell` (PTY 模式)
+**在大多数开发和运维场景下，优先选择 `ssh_shell`。**
+*   **人机协作**：PTY 模式允许用户通过 Web UI 或资源流实时看到你的每一步操作，方便在关键时刻进行人工干预。
+*   **上下文延续**：维持一个长连接会话，就像在真实的终端里工作一样，避免重复加载环境变量。
+*   **实时反馈**：配合资源订阅，可以立即获得命令的流式输出，无需等待命令完全执行结束。
 
+### ⚡ 辅助选择：`ssh_exec` (单次执行)
+*   **自动化脚本**：在不需要人工干预的纯自动化流程中。
+*   **结果抓取**：仅需获取一个简单的配置值或状态（如 `cat version`），且不需要后续连续操作时。
+
+### 📁 文件操作
+*   **始终优先使用 `ssh_file_*` (SFTP)**：
+    *   不要用 `ssh_exec` 配合 `cat > file` 或 `echo "..." >> file`。
+    *   SFTP 工具更安全、处理特殊字符和换行符更稳健。
+
+---
+
+## ⚡ 核心能力：流式 PTY 终端
+
+当开启协作模式时，请遵循以下流程以获得最佳体验：
+
+1.  **开启终端**：调用 `ssh_shell`。
+2.  **告知用户**：在回复中提到：“我已开启交互式终端，你可以通过 Web UI 实时观察或在资源 `mcp://ssh/shell/{shellId}/output` 中查看流式输出。”
+3.  **订阅资源**：**强烈推荐订阅：`mcp://ssh/shell/{shellId}/output`**，这是获取实时反馈的最佳途径。
+4.  **发送输入**：使用 `ssh_shell_write` 发送命令。
+    *   默认会自动追加换行符。
+    *   对于特殊控制符（如 Ctrl+C），请发送 `\x03`。
+5.  **智能等待**：如果必须使用 `ssh_shell_read`，利用 `expect` 参数等待特定 Prompt 出现。
+
+---
+
+## ☸️ Kubernetes (K8s) 运维
+
+*   **连接方式**：远程节点先 `ssh_connect`；本地控制直接 `k8s_connect`。
+*   **Arthas 诊断**：使用 `ssh_k8s_arthas_attach` 诊断 Java 应用，支持自动检测 PID。
+
+---
+
+## 📝 系统提示词 (System Prompt) 模板
+
+*你可以将以下内容复制到你的 AI 助手（如 Claude 或 Cursor）的自定义指令中：*
+
+```markdown
+# ssh-mcp Collaborative Expert Instructions
+You are an expert Linux System Administrator. When using ssh-mcp:
+1. PREFER `ssh_shell` for most tasks to enable real-time human-AI collaboration.
+2. Tell the user when you open a shell so they can follow along in the Web UI or via resource streaming.
+3. For monitoring, ALWAYS prioritize subscribing to the resource `mcp://ssh/shell/{shellId}/output`.
+4. Use `ssh_exec` only for trivial, non-interactive "read-only" checks.
+5. Use SFTP tools (`ssh_file_*`) for all file operations to ensure data integrity.
+6. If a command times out in `ssh_exec`, use the returned `runId` to poll `ssh_exec_bg_result`.
+7. Always disconnect sessions using `ssh_disconnect` when finished to save resources.
 ```
-ssh_connect host="192.168.1.1" username="root" password="xxx"
-→ sess_xxx
 
-ssh_exec sessionId="sess_xxx" command="whoami"
-ssh_file_read sessionId="sess_xxx" path="/etc/hostname"
+---
 
-ssh_disconnect sessionId="sess_xxx"
-```
+## 🛠️ 工具速查表
 
-**Stateless 模式（一次性命令）**：每次调用都传完整认证信息。
+| 场景 | 推荐工具 |
+| :--- | :--- |
+| **基础连接** | `ssh_connect`, `k8s_connect` |
+| **查进程/资源** | `ssh_processes`, `ssh_sysinfo`, `ssh_disk_usage` |
+| **读写文件** | `ssh_file_read`, `ssh_file_write` |
+| **后台长任务** | `ssh_exec_bg` + `ssh_exec_bg_result` |
+| **交互式调试** | `ssh_shell` + `mcp://ssh/shell/{id}/output` |
+| **K8s 运维** | `ssh_k8s_list_pods`, `ssh_k8s_pod_logs`, `ssh_k8s_pod_exec` |
+| **Java 诊断** | `ssh_k8s_arthas_attach` |
 
-```
-ssh_exec host="192.168.1.1" username="root" password="xxx" command="uptime"
-```
-
-默认 30 分钟无操作自动清理空闲会话。
-
-## 认证参数（所有工具共享）
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `host` | string | 服务器地址（必填） |
-| `port` | number | SSH 端口，默认 22 |
-| `username` | string | 用户名，默认 root |
-| `password` | string | 密码（与 privateKey 二选一） |
-| `privateKey` | string | 私钥内容字符串 |
-| `passphrase` | string | 私钥密码 |
-| `timeout` | number | 超时毫秒数 |
-
-## 工具清单
-
-### 会话管理
-
-| 工具 | 必填参数 | 说明 |
-|------|----------|------|
-| `ssh_connect` | `host` | 创建持久 SSH 会话，返回 sessionId |
-| `ssh_disconnect` | `sessionId` | 关闭指定会话 |
-| `ssh_sessions` | 无 | 列出所有活跃会话 |
-
-### 命令执行
-
-| 工具 | 必填参数 | 说明 |
-|------|----------|------|
-| `ssh_exec` | `command` | 执行命令，支持 `cwd`/`sudo`/`env` |
-| `ssh_script` | `script` | 执行多行脚本，支持 `interpreter`(sh/bash/python) |
-| `ssh_exec_bg` | `sessionId`, `command` | 后台运行命令（非阻塞），返回 runId |
-| `ssh_exec_bg_result` | `sessionId`, `runId` | 查询后台任务状态和输出 |
-| `ssh_exec_stop` | `sessionId` (+ `runId`/`pid`) | 停止后台任务，`force=true` 发 SIGKILL |
-
-**Smart Timeout**：`ssh_exec` 默认 10 分钟超时。超时后自动转后台，返回 runId，可用 `ssh_exec_bg_result` 查结果。
-
-### SFTP 文件操作
-
-| 工具 | 必填参数 | 说明 |
-|------|----------|------|
-| `ssh_file_read` | `path` | 读取远程文件内容 |
-| `ssh_file_write` | `path`, `content` | 写入远程文件，`mkdir=true` 自动创建父目录 |
-| `ssh_file_list` | `path` | 列出目录内容（权限/大小/时间） |
-| `ssh_file_delete` | `path` | 删除文件或目录，`recursive=true` 递归删除 |
-| `ssh_file_rename` | `source`, `dest` | 重命名或移动文件 |
-| `ssh_file_mkdir` | `path` | 创建目录，`parents=true` 类似 mkdir -p |
-| `ssh_file_chmod` | `path`, `mode` | 修改权限，`mode="755"`，支持 recursive |
-| `ssh_file_stat` | `path` | 获取文件/目录详细信息 |
-
-### 系统监控
-
-| 工具 | 说明 |
-|------|------|
-| `ssh_sysinfo` | OS/内核/CPU/内存/磁盘/运行时间/负载 |
-| `ssh_processes` | 进程列表，`sort` 按 cpu/memory/pid 排序，`limit` 控制数量 |
-| `ssh_disk_usage` | 磁盘使用情况，`path` 指定路径 |
-
-### 日志查看
-
-| 工具 | 必填参数 | 说明 |
-|------|----------|------|
-| `ssh_log_tail` | `path` | 查看文件尾部，`lines` 指定行数（默认 50，0 为全文） |
-| `ssh_log_search` | `path`, `pattern` | grep 搜索，`context` 设置上下文行数 |
-
-## 使用建议
-
-1. **多步操作请用 session 模式**，避免反复创建 TCP 连接
-2. **长时间运行的任务**用 `ssh_exec_bg`，避免超时
-3. **文件操作优先用 SFTP 工具**（`ssh_file_*`），不要在 exec 里用 cat/echo/重定向
-4. **私钥内容要包含完整的头和换行符**（`\n` 转义）
-5. **用完记得 `ssh_disconnect`**，避免耗尽服务端 MaxSessions
-6. **脚本中有变量引用时注意转义**，或者用 `ssh_script` 传多行内容
-7. **环境变量**通过 `env={ "KEY": "value" }` 参数传递
+---
+*Generated by Gemini CLI — 2026-06-09*
