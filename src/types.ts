@@ -175,6 +175,7 @@ export interface SshShellArgs {
   cols?: number;
   rows?: number;
   term?: string;
+  keepAlive?: boolean;
 }
 
 export interface SshShellWriteArgs {

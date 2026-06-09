@@ -16,6 +16,7 @@ interface ShellSession {
   createdAt: number;
   wsClients?: Set<any>;
   readCursor: number;
+  heartbeatTimer?: ReturnType<typeof setInterval>;
 }
 
 const shells = new Map<string, ShellSession>();
@@ -114,6 +115,9 @@ function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number, 
 export function cleanShellsBySession(sessionId: string) {
   for (const [id, shell] of shells) {
     if (shell.sessionId === sessionId) {
+      if (shell.heartbeatTimer) {
+        clearInterval(shell.heartbeatTimer);
+      }
       if (!shell.closed) {
         try { shell.channel.close(); } catch { /* ignore */ }
       }
@@ -198,6 +202,18 @@ export async function handleShellCreate(args: SshShellArgs) {
         readCursor: 0,
       };
 
+      // Heartbeat to prevent TMOUT (inactivity timeout)
+      if (args.keepAlive) {
+        shell.heartbeatTimer = setInterval(() => {
+          if (!shell.closed) {
+            // Send a null byte - most shells see this as activity but ignore the character
+            channel.stdin.write("\x00");
+          } else if (shell.heartbeatTimer) {
+            clearInterval(shell.heartbeatTimer);
+          }
+        }, 30000); // Every 30 seconds
+      }
+
       channel.on("data", (data: Buffer) => {
         const str = data.toString("utf-8");
         appendBuffer(shell, str);
@@ -216,6 +232,10 @@ export async function handleShellCreate(args: SshShellArgs) {
 
       channel.on("close", () => {
         shell.closed = true;
+        if (shell.heartbeatTimer) {
+          clearInterval(shell.heartbeatTimer);
+          shell.heartbeatTimer = undefined;
+        }
         shell.wsClients?.forEach(ws => {
           if (ws.readyState === 1) ws.send("\r\n[Shell session closed]\r\n");
         });
@@ -384,6 +404,9 @@ export async function handleShellClose(args: SshShellCloseArgs) {
 
   if (!shell.closed) {
     shell.channel.close();
+  }
+  if (shell.heartbeatTimer) {
+    clearInterval(shell.heartbeatTimer);
   }
   shells.delete(args.shellId);
 

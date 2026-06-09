@@ -393,6 +393,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           cols: { type: "number", description: "Terminal columns (default: 120)" },
           rows: { type: "number", description: "Terminal rows (default: 30)" },
           term: { type: "string", description: "Terminal type (default: xterm)" },
+          keepAlive: { type: "boolean", description: "If true, send periodic heartbeats to prevent shell timeout (TMOUT)" },
         },
         required: ["sessionId"],
       },
