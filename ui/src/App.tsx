@@ -24,6 +24,7 @@ interface ShellSession {
   sessionId: string;
   closed: boolean;
   age: number;
+  keepAlive?: boolean;
 }
 
 interface SftpFile {
@@ -518,6 +519,14 @@ export default function App() {
                       </span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      {sh.keepAlive && (
+                        <span 
+                          title={lang === "zh" ? "已开启心跳维持" : "Keep-alive enabled"}
+                          style={{ fontSize: "10px", color: "var(--accent-neon)", opacity: 0.8 }}
+                        >
+                          💓
+                        </span>
+                      )}
                       <span style={{ fontSize: "10px", color: "var(--text-secondary)" }}>{sh.age}s</span>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleCloseShell(sh.id); }}
@@ -1100,6 +1109,7 @@ function XtermView({ shellId, lang }: XtermViewProps) {
   const terminalRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const [lastHeartbeat, setLastHeartbeat] = useState<number>(0);
 
   const t = (key: keyof typeof translations["en"]): string => {
     return translations[lang][key] || translations["en"][key] || "";
@@ -1141,7 +1151,13 @@ function XtermView({ shellId, lang }: XtermViewProps) {
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
 
-    socket.onmessage = (event) => { term.write(event.data); };
+    socket.onmessage = (event) => { 
+      if (typeof event.data === "string" && event.data === "\x01HB") {
+        setLastHeartbeat(Date.now());
+      } else {
+        term.write(event.data); 
+      }
+    };
     socket.onclose = () => { term.write("\r\n\r\n[WebSocket connection disconnected]\r\n"); };
     term.onData((data) => {
       if (socket.readyState === WebSocket.OPEN) socket.send(data);
@@ -1163,13 +1179,50 @@ function XtermView({ shellId, lang }: XtermViewProps) {
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--accent-neon)", boxShadow: "0 0 8px var(--accent-neon)" }} />
           <span style={{ fontSize: "14px", fontWeight: 600 }}>{t("activeTerminal")}: {shellId}</span>
+          {Date.now() - lastHeartbeat < 3000 && (
+            <div style={{ 
+              fontSize: "10px", 
+              color: "var(--accent-neon)", 
+              marginLeft: "10px",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              animation: "pulse 1.5s infinite"
+            }}>
+              <span role="img" aria-label="heartbeat">💓</span> {lang === "zh" ? "心跳" : "Heartbeat"}
+            </div>
+          )}
         </div>
-        <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("wsConnected")}</div>
+        <div style={{ fontSize: "12px", color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "15px" }}>
+          <button 
+            onClick={() => terminalRef.current?.clear()}
+            style={{ 
+              background: "transparent", 
+              border: "1px solid var(--panel-border)", 
+              color: "var(--text-secondary)",
+              padding: "2px 8px",
+              borderRadius: "4px",
+              fontSize: "11px",
+              cursor: "pointer"
+            }}
+          >
+            {t("clear")}
+          </button>
+          <div>{t("wsConnected")}</div>
+        </div>
       </div>
       
       <div style={{ flex: 1, position: "relative", padding: "10px" }}>
         <div ref={containerRef} style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0, padding: "10px", boxSizing: "border-box" }} />
       </div>
+
+      <style>{`
+        @keyframes pulse {
+          0% { opacity: 0.4; transform: scale(0.95); }
+          50% { opacity: 1; transform: scale(1); }
+          100% { opacity: 0.4; transform: scale(0.95); }
+        }
+      `}</style>
     </div>
   );
 }

@@ -16,6 +16,7 @@ interface ShellSession {
   createdAt: number;
   wsClients?: Set<any>;
   readCursor: number;
+  keepAlive?: boolean;
   heartbeatTimer?: ReturnType<typeof setInterval>;
 }
 
@@ -158,13 +159,14 @@ export function writeInputToShell(shellId: string, data: string) {
 }
 
 export function listActiveShells() {
-  const result: { id: string; sessionId: string; closed: boolean; age: number }[] = [];
+  const result: { id: string; sessionId: string; closed: boolean; age: number; keepAlive: boolean }[] = [];
   for (const shell of shells.values()) {
     result.push({
       id: shell.id,
       sessionId: shell.sessionId,
       closed: shell.closed,
-      age: Math.floor((Date.now() - shell.createdAt) / 1000)
+      age: Math.floor((Date.now() - shell.createdAt) / 1000),
+      keepAlive: !!shell.keepAlive
     });
   }
   return result;
@@ -200,6 +202,7 @@ export async function handleShellCreate(args: SshShellArgs) {
         closed: false,
         createdAt: Date.now(),
         readCursor: 0,
+        keepAlive: !!args.keepAlive,
       };
 
       // Heartbeat to prevent TMOUT (inactivity timeout)
@@ -208,6 +211,10 @@ export async function handleShellCreate(args: SshShellArgs) {
           if (!shell.closed) {
             // Send a null byte - most shells see this as activity but ignore the character
             channel.stdin.write("\x00");
+            // Notify WebSocket clients that a heartbeat was sent
+            shell.wsClients?.forEach(ws => {
+              if (ws.readyState === 1) ws.send("\x01HB");
+            });
           } else if (shell.heartbeatTimer) {
             clearInterval(shell.heartbeatTimer);
           }

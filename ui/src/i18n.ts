@@ -89,6 +89,7 @@ export const translations = {
     sftpActions: "操作",
     sftpEmpty: "此目录为空",
     sftpRefresh: "刷新",
+    clear: "清空",
   },
   en: {
     title: "SSH-MCP Console",
@@ -180,6 +181,7 @@ export const translations = {
     sftpActions: "Actions",
     sftpEmpty: "This directory is empty",
     sftpRefresh: "Refresh",
+    clear: "Clear",
   }
 };
 
