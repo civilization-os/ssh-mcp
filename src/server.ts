@@ -2,7 +2,8 @@ import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import sirv from "sirv";
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer, WebSocket, createWebSocketStream } from "ws";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { listSessions, disconnectSession } from "./session.js";
 import {
   attachWsToShell,
@@ -453,6 +454,19 @@ export function startHttpServer(initialPort: number = 12222) {
 
   wss.on("connection", (ws: WebSocket, request: http.IncomingMessage) => {
     const url = new URL(request.url || "", `http://localhost:${currentPort}`);
+    
+    // Support for Slave-to-Master MCP proxying
+    if (url.pathname === "/ws/mcp") {
+      console.error(`[Master] Slave instance connected via MCP proxy`);
+      const duplex = createWebSocketStream(ws);
+      const transport = new StdioServerTransport(duplex as any, duplex as any);
+      
+      if ((server as any).onMcpTransport) {
+        (server as any).onMcpTransport(transport);
+      }
+      return;
+    }
+
     const shellId = url.searchParams.get("shellId");
 
     if (!shellId) {
@@ -487,7 +501,7 @@ export function startHttpServer(initialPort: number = 12222) {
   // Upgrade HTTP connections to WebSocket
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "", `http://localhost:${currentPort}`);
-    if (url.pathname === "/ws/shell") {
+    if (url.pathname === "/ws/shell" || url.pathname === "/ws/mcp") {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);
       });

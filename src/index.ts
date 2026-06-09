@@ -2,6 +2,8 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import net from "net";
+import { WebSocket, createWebSocketStream } from "ws";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -964,8 +966,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // --- Startup ---
 
+async function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = net.createServer()
+      .once('error', () => resolve(false))
+      .once('listening', () => {
+        tester.once('close', () => resolve(true)).close();
+      })
+      .listen(port, '127.0.0.1');
+  });
+}
+
 async function main() {
+  const port = 12222;
+  const available = await isPortAvailable(port);
+
+  if (!available) {
+    // Slave Mode: Proxy to existing Master
+    console.error(`[Slave] Port ${port} busy, connecting to Master...`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/mcp`);
+    
+    ws.on('open', () => {
+      console.error(`[Slave] Connected to Master. Proxying stdio...`);
+      const duplex = createWebSocketStream(ws);
+      process.stdin.pipe(duplex).pipe(process.stdout);
+    });
+    
+    ws.on('error', (err) => {
+      console.error(`[Slave] Connection error: ${err.message}`);
+      process.exit(1);
+    });
+    
+    ws.on('close', () => {
+      console.error(`[Slave] Master connection closed.`);
+      process.exit(0);
+    });
+    return;
+  }
+
+  // Master Mode: Normal startup
   const transport = new StdioServerTransport();
+  
+  // Start HTTP server and set up transport handler for slaves
+  const httpServer = startHttpServer(port);
+  (httpServer as any).onMcpTransport = (slaveTransport: any) => {
+    server.connect(slaveTransport).catch(e => console.error("[Master] Slave transport error:", e));
+  };
+
   await server.connect(transport);
 
   // Resolve absolute path to this build file for MCP client config
@@ -985,6 +1032,7 @@ async function main() {
   console.error("╔══════════════════════════════════════════════════════════╗");
   console.error("║              SSH-MCP Server — READY                     ║");
   console.error("╠══════════════════════════════════════════════════════════╣");
+  console.error("║  Mode     : Master (Singleton Backend)                  ║");
   console.error("║  Protocol : stdio (MCP JSON-RPC)                        ║");
   console.error("║  REST/WS  : http://localhost:12222                      ║");
   console.error("║  Web UI   : http://localhost:5174                       ║");
@@ -993,9 +1041,6 @@ async function main() {
   console.error("╚══════════════════════════════════════════════════════════╝");
   console.error(JSON.stringify(mcpConfig, null, 2));
   console.error("────────────────────────────────────────────────────────────");
-
-  // Start REST/WebSocket server for frontend client integration
-  startHttpServer(12222);
 
   // Restore persisted sessions from previous run
   await loadAndReconnectSessions();
