@@ -162,21 +162,6 @@ export type SshDiskUsageArgs = {
   timeout?: number;
 } & Partial<SshCredentials>;
 
-export type SshLogTailArgs = {
-  sessionId?: string;
-  path: string;
-  lines?: number;
-  timeout?: number;
-} & Partial<SshCredentials>;
-
-export type SshLogSearchArgs = {
-  sessionId?: string;
-  path: string;
-  pattern: string;
-  context?: number;
-  timeout?: number;
-} & Partial<SshCredentials>;
-
 /** Shared MCP tool result type */
 export type ToolResult = {
   content: { type: string; text: string }[];
@@ -195,6 +180,7 @@ export interface SshShellArgs {
 export interface SshShellWriteArgs {
   shellId: string;
   input: string;
+  raw?: boolean;
 }
 
 export interface SshShellReadArgs {
@@ -204,6 +190,9 @@ export interface SshShellReadArgs {
   waitMs?: number;
   maxWaitMs?: number;
   peek?: boolean;
+  stripAnsi?: boolean;
+  expect?: string;
+  tailLines?: number;
 }
 
 export interface SshShellResizeArgs {
@@ -322,14 +311,6 @@ export function validateSshProcessesArgs(_args: unknown): _args is SshProcessesA
 
 export function validateSshDiskUsageArgs(_args: unknown): _args is SshDiskUsageArgs {
   return isRecord(_args);
-}
-
-export function validateSshLogTailArgs(args: unknown): args is SshLogTailArgs {
-  return isRecord(args) && typeof args.path === "string";
-}
-
-export function validateSshLogSearchArgs(args: unknown): args is SshLogSearchArgs {
-  return isRecord(args) && typeof args.path === "string" && typeof args.pattern === "string";
 }
 
 export function validateSshShellArgs(args: unknown): args is SshShellArgs {

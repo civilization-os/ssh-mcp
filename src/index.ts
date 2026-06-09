@@ -38,8 +38,6 @@ import {
   handleSysinfo,
   handleProcesses,
   handleDiskUsage,
-  handleLogTail,
-  handleLogSearch,
 } from "./handlers/system.js";
 import {
   handleK8sListPods,
@@ -74,8 +72,6 @@ import {
   validateSshSysinfoArgs,
   validateSshProcessesArgs,
   validateSshDiskUsageArgs,
-  validateSshLogTailArgs,
-  validateSshLogSearchArgs,
   validateSshExecBgArgs,
   validateSshExecStopArgs,
   validateSshExecBgResultArgs,
@@ -403,19 +399,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_shell_write",
-      description: "Write input to an interactive shell. Supports text, commands, and control sequences. Literal '\\n' is converted to a real newline, and a newline is automatically appended if missing.",
+      description: "Write input to an interactive shell. Supports text, commands, and control sequences. By default, literal '\\n' is converted to a real newline and a newline is automatically appended if missing. Use 'raw: true' to send input exactly as provided.",
       inputSchema: {
         type: "object",
         properties: {
           shellId: { type: "string", description: "Shell ID from ssh_shell" },
-          input: { type: "string", description: "Text to write to the shell stdin. Newline will be appended if it doesn't end with one." },
+          input: { type: "string", description: "Text to write to the shell stdin." },
+          raw: { type: "boolean", description: "If true, bypass auto-newline and unescaping logic (default: false)" },
         },
         required: ["shellId", "input"],
       },
     },
     {
       name: "ssh_shell_read",
-      description: "Read buffered output from an interactive shell. Returns a JSON object with 'content', 'status', and 'promptShown'. Supports 'peek' mode and capped waiting.",
+      description: "Read buffered output from an interactive shell. Returns a JSON object with 'content', 'status', and 'promptShown'. Features: pattern-based waiting (expect), ANSI stripping, and tail-line snapshots.",
       inputSchema: {
         type: "object",
         properties: {
@@ -425,6 +422,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           waitMs: { type: "number", description: "Wait for N ms of silence before returning (e.g. 500 = wait until output stops)" },
           maxWaitMs: { type: "number", description: "Maximum total time to wait in ms, even if output is still flowing" },
           peek: { type: "boolean", description: "Return current buffer immediately without waiting or clearing" },
+          stripAnsi: { type: "boolean", description: "Remove ANSI escape codes from the output (default: false)" },
+          expect: { type: "string", description: "Wait until this regex pattern appears in the output (replaces waitMs if it matches early)" },
+          tailLines: { type: "number", description: "Only return the last N lines of output (useful for snapshots)" },
         },
         required: ["shellId"],
       },
@@ -459,36 +459,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {} },
     },
 
-    // ======== Log Viewing ========
-    {
-      name: "ssh_log_tail",
-      description: "View the tail end of a log file on the remote server.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID from ssh_connect" },
-          ...authFields,
-          path: { type: "string", description: "Absolute path to the log file" },
-          lines: { type: "number", description: "Number of lines to show (default: 50, 0 = full file)", default: 50 },
-        },
-        required: ["path"],
-      },
-    },
-    {
-      name: "ssh_log_search",
-      description: "Search for a pattern in a log file on the remote server using grep.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID from ssh_connect" },
-          ...authFields,
-          path: { type: "string", description: "Absolute path to the log file" },
-          pattern: { type: "string", description: "Search pattern (grep syntax)" },
-          context: { type: "number", description: "Lines of context before/after match (default: 2)", default: 2 },
-        },
-        required: ["path", "pattern"],
-      },
-    },
     // ======== Kubernetes ========
     {
       name: "ssh_k8s_list_pods",
@@ -747,22 +717,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleDiskUsage(args);
       }
 
-      // Logs
-      case "ssh_log_tail": {
-        if (!validateSshLogTailArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "path is required");
-        }
-        return await handleLogTail(args);
-      }
-
-      case "ssh_log_search": {
-        if (!validateSshLogSearchArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "path and pattern are required");
-        }
-        return await handleLogSearch(args);
-      }
-
-      // Kubernetes
       case "ssh_k8s_list_pods": {
         if (!validateSshK8sListPodsArgs(args)) {
           throw new McpError(ErrorCode.InvalidParams, "Invalid parameters");

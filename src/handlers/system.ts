@@ -4,8 +4,6 @@ import {
   SshSysinfoArgs,
   SshProcessesArgs,
   SshDiskUsageArgs,
-  SshLogTailArgs,
-  SshLogSearchArgs,
 } from "../types.js";
 
 function execSimple(client: Client, command: string, timeoutMs: number): Promise<string> {
@@ -97,34 +95,4 @@ export async function handleDiskUsage(args: SshDiskUsageArgs) {
   ) as string;
 
   return { content: [{ type: "text" as const, text: result.trim() || "(no output)" }] };
-}
-
-// --- Log Tail ---
-
-export async function handleLogTail(args: SshLogTailArgs) {
-  const lines = args.lines ?? 50;
-  const timeout = args.timeout ?? 15000;
-
-  const result = await resolveClient(args, (client) => {
-    if (lines > 0) {
-      return execSimple(client, `tail -${lines} ${args.path} 2>&1`, timeout);
-    }
-    return execSimple(client, `cat ${args.path} 2>&1`, timeout);
-  }) as string;
-
-  return { content: [{ type: "text" as const, text: result.trim() || "(empty file)" }] };
-}
-
-// --- Log Search ---
-
-export async function handleLogSearch(args: SshLogSearchArgs) {
-  const ctx = args.context ?? 2;
-  const timeout = args.timeout ?? 30000;
-  const pattern = args.pattern.replace(/'/g, "'\\''");
-
-  const result = await resolveClient(args, (client) =>
-    execSimple(client, `grep -n -C ${ctx} '${pattern}' ${args.path} 2>&1 || echo "(no matches)"`, timeout)
-  ) as string;
-
-  return { content: [{ type: "text" as const, text: result.trim() }] };
 }

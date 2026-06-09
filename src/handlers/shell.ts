@@ -15,6 +15,7 @@ interface ShellSession {
   closed: boolean;
   createdAt: number;
   wsClients?: Set<any>;
+  readCursor: number;
 }
 
 const shells = new Map<string, ShellSession>();
@@ -28,14 +29,31 @@ function generateShellId(): string {
 function appendBuffer(shell: ShellSession, data: string) {
   shell.buffer += data;
   if (shell.buffer.length > MAX_BUFFER_SIZE) {
+    const overflow = shell.buffer.length - MAX_BUFFER_SIZE;
     shell.buffer = shell.buffer.slice(-MAX_BUFFER_SIZE);
+    // Adjust cursor after truncation
+    shell.readCursor = Math.max(0, (shell.readCursor || 0) - overflow);
   }
 }
 
-function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number): Promise<void> {
+function stripAnsi(text: string): string {
+  return text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+}
+
+function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number, expectPattern?: string): Promise<void> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let maxTimer: ReturnType<typeof setTimeout> | null = null;
+    let expectRegex: RegExp | null = null;
+
+    if (expectPattern) {
+      try {
+        expectRegex = new RegExp(expectPattern);
+      } catch (e) {
+        // Fallback to simple include if regex is invalid
+        console.warn(`Invalid regex pattern in expect: ${expectPattern}`);
+      }
+    }
 
     const finish = () => {
       if (timer) clearTimeout(timer);
@@ -47,6 +65,19 @@ function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number):
     };
 
     const onData = () => {
+      if (expectRegex) {
+        // Only check data after the cursor for new matches
+        const searchable = shell.buffer.slice(shell.readCursor);
+        const tail = searchable.slice(-4096);
+        if (expectRegex.test(tail) || expectRegex.test(stripAnsi(tail))) {
+          finish();
+          return;
+        }
+      } else if (expectPattern && shell.buffer.slice(shell.readCursor).includes(expectPattern)) {
+        finish();
+        return;
+      }
+
       if (timer) clearTimeout(timer);
       timer = setTimeout(finish, quietMs);
     };
@@ -54,6 +85,19 @@ function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number):
     const onClose = () => {
       finish();
     };
+
+    // Initial check (only in the new content since readCursor)
+    if (expectRegex) {
+      const searchable = shell.buffer.slice(shell.readCursor);
+      const tail = searchable.slice(-4096);
+      if (expectRegex.test(tail) || expectRegex.test(stripAnsi(tail))) {
+        finish();
+        return;
+      }
+    } else if (expectPattern && shell.buffer.slice(shell.readCursor).includes(expectPattern)) {
+      finish();
+      return;
+    }
 
     timer = setTimeout(finish, quietMs);
     if (maxWaitMs && maxWaitMs > 0) {
@@ -151,6 +195,7 @@ export async function handleShellCreate(args: SshShellArgs) {
         buffer: "",
         closed: false,
         createdAt: Date.now(),
+        readCursor: 0,
       };
 
       channel.on("data", (data: Buffer) => {
@@ -209,26 +254,31 @@ export async function handleShellWrite(args: SshShellWriteArgs) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' is closed` }], isError: true };
   }
 
-  // Adapt for agents that send literal \n or forget it
   let input = args.input || "";
   
-  // 1. Unescape literal \n, \r, \t
-  input = input
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t');
-  
-  // 2. Auto-append newline if missing and not a control sequence
-  if (input.length > 0 && 
-      !input.endsWith('\n') && 
-      !input.endsWith('\r') &&
-      !input.endsWith('\x03') && // Ctrl+C
-      !input.endsWith('\x04')    // Ctrl+D
-     ) {
-    input += '\n';
+  if (!args.raw) {
+    // Adapt for agents that send literal \n or forget it
+    // 1. Unescape literal \n, \r, \t
+    input = input
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t');
+    
+    // 2. Auto-append newline if missing and not a control sequence
+    if (input.length > 0 && 
+        !input.endsWith('\n') && 
+        !input.endsWith('\r') &&
+        !input.endsWith('\x03') && // Ctrl+C
+        !input.endsWith('\x04')    // Ctrl+D
+       ) {
+      input += '\n';
+    }
   }
 
   return new Promise<ToolResult>((resolve) => {
+    // Before writing, update the cursor to ignore any previous output for future expects
+    shell.readCursor = shell.buffer.length;
+    
     shell.channel.stdin.write(input, "utf-8", (err: Error | null | undefined) => {
       if (err) {
         resolve({ content: [{ type: "text" as const, text: `Error writing to shell: ${err.message}` }], isError: true });
@@ -250,46 +300,48 @@ export async function handleShellRead(args: SshShellReadArgs) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' not found` }], isError: true };
   }
 
-  // Peek mode: return immediately without waiting or clearing
-  if (args.peek) {
-    const output = shell.buffer;
-    const maxLen = args.maxLength ?? 50000;
-    const text = output.length > maxLen ? output.slice(-maxLen) : output;
-    
-    // Heuristic: check if prompt is likely present (ends with standard prompt chars)
-    const promptShown = /[:\w\s~.-]+[@\w\s~.-]+[#$>]\s*$/.test(text.slice(-50));
-
-    return {
-      content: [{
-        type: "text" as const,
-        text: JSON.stringify({
-          shellId: args.shellId,
-          status: shell.closed ? "CLOSED" : "OPEN",
-          promptShown,
-          bufferSize: output.length,
-          content: text || "(no output)"
-        }, null, 2)
-      }]
-    };
-  }
-
-  // Optional: wait for output to settle
+  // Optional: wait for output to settle or for a specific pattern
   const waitMs = args.waitMs ?? 0;
-  if (waitMs > 0 && !shell.closed) {
-    await waitForQuiet(shell, waitMs, args.maxWaitMs);
+  if ((waitMs > 0 || args.expect) && !shell.closed && !args.peek) {
+    await waitForQuiet(shell, waitMs, args.maxWaitMs, args.expect);
   }
 
-  const output = shell.buffer;
+  let output = shell.buffer;
   const maxLen = args.maxLength ?? 50000;
+  
+  if (args.stripAnsi) {
+    output = stripAnsi(output);
+  }
+
+  // Handle tailLines snapshot with performance optimization
+  if (args.tailLines && args.tailLines > 0) {
+    // If output is large, take only the last ~128KB to avoid splitting a huge string
+    const CHUNK_SIZE = 128 * 1024;
+    const tailChunk = output.length > CHUNK_SIZE ? output.slice(-CHUNK_SIZE) : output;
+    const lines = tailChunk.split(/\r?\n/);
+    if (lines.length > args.tailLines) {
+      output = lines.slice(-args.tailLines).join("\n");
+    } else {
+      // If the last 128KB has fewer lines than requested, we might need the whole thing, 
+      // but usually 128KB is plenty for any reasonable tailLines value.
+      output = lines.slice(-args.tailLines).join("\n");
+    }
+  }
+
   const truncated = output.length > maxLen;
   const text = truncated ? output.slice(-maxLen) : output;
 
-  if (args.clear ?? false) {
+  if ((args.clear ?? false) && !args.peek) {
     shell.buffer = "";
+    shell.readCursor = 0;
+  } else if (!args.peek) {
+    // Advance cursor to mark all current content as read/acknowledged
+    shell.readCursor = shell.buffer.length;
   }
 
-  // Heuristic for prompt detection
-  const promptShown = /[:\w\s~.-]+[@\w\s~.-]+[#$>]\s*$/.test(text.slice(-50));
+  // Heuristic for prompt detection (strip ANSI before checking)
+  const cleanTail = stripAnsi(text.slice(-100));
+  const promptShown = /[:\w\s~.-]+[@\w\s~.-]+[#$>]\s*$/.test(cleanTail);
 
   const result = {
     shellId: args.shellId,
