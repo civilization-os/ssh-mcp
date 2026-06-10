@@ -6,7 +6,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/civilization-os/ssh-mcp/pulls)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-7C3AED.svg)](https://modelcontextprotocol.io)
 
-> AI-powered remote server management via the Model Context Protocol. Persistent SSH sessions, full SFTP operations, system monitoring, and interactive Shell (PTY) with built-in UI.
+> Human-AI collaborative server operations via SSH, interactive PTY sessions, terminal buffer reading, SFTP, Kubernetes tools, and a built-in Web UI.
 
 🌐 **Other languages:** [中文](README.zh-CN.md)
 
@@ -14,7 +14,11 @@
 
 ### Overview
 
-**ssh-mcp** is an MCP (Model Context Protocol) server that turns any AI coding agent into a full-featured remote server administration tool. It maintains persistent SSH connections, executes commands, transfers files, and monitors system health — all through natural language conversations. It also features a built-in Web UI for visual terminal and file management.
+**ssh-mcp** is an MCP (Model Context Protocol) server designed for human-AI collaborative server operations.
+
+It is not just a remote command executor. It keeps long-lived SSH sessions, exposes interactive Shell (PTY) state, allows agents to read the current terminal buffer and continue input, and provides full SFTP file operations. This makes it suitable for AI coding agents that need to inspect, operate, debug, and modify remote Linux servers while keeping the human user able to observe and intervene.
+
+It also includes a built-in Web UI for visual terminal access, SFTP file management, Kubernetes operations, and system monitoring.
 
 ### Features
 
