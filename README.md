@@ -6,7 +6,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/civilization-os/ssh-mcp/pulls)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-7C3AED.svg)](https://modelcontextprotocol.io)
 
-> Human-AI collaborative server operations via SSH, interactive PTY sessions, terminal buffer reading, SFTP, Kubernetes tools, and a built-in Web UI.
+> A stateful server operations runtime for AI agents: persistent SSH, interactive PTY, shell output streaming, terminal buffer reading, SFTP, Kubernetes tools, and a built-in browser console.
 
 🌐 **Other languages:** [中文](README.zh-CN.md)
 
@@ -14,11 +14,13 @@
 
 ### Overview
 
-**ssh-mcp** is an MCP (Model Context Protocol) server designed for human-AI collaborative server operations.
+**ssh-mcp** is an MCP (Model Context Protocol) server for human-AI collaborative server operations.
 
-It is not just a remote command executor. It keeps long-lived SSH sessions, exposes interactive Shell (PTY) state, allows agents to read the current terminal buffer and continue input, and provides full SFTP file operations. This makes it suitable for AI coding agents that need to inspect, operate, debug, and modify remote Linux servers while keeping the human user able to observe and intervene.
+It is not just a remote command executor. It keeps long-lived SSH sessions, exposes interactive Shell (PTY) state, allows agents to read the current terminal buffer and continue input, supports real-time shell output updates through MCP resources, and provides full SFTP file operations.
 
-It also includes a built-in Web UI for visual terminal access, SFTP file management, Kubernetes operations, and system monitoring.
+This makes it suitable for Claude Code, Codex, Cursor, and other AI coding agents that need long-lived, observable, and controllable interactions with remote Linux servers while keeping the human user able to observe, verify, and take over at any time.
+
+It also includes a built-in browser operations console for visual terminal access, SFTP file management, Kubernetes operations, and system monitoring.
 
 ### Features
 
@@ -26,16 +28,17 @@ It also includes a built-in Web UI for visual terminal access, SFTP file managem
 |----------|-------|-------------|
 | **Session** | `ssh_connect`, `k8s_connect`, `ssh_disconnect`, `ssh_sessions` | Persistent SSH or local Kubernetes connection pool |
 | **SFTP** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Full file operations with recursive directory delete/chmod, mkdir -p support |
-| **Monitoring** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | OS info, process list (sorted by CPU/memory), disk usage |
-| **Interactive Shell** | `ssh_shell`, `ssh_shell_read`, `ssh_shell_write`, `ssh_shell_resize`, `ssh_shell_close` | Full PTY support with `expect` pattern matching, ANSI stripping, `tailLines` snapshots, and `keepAlive` heartbeats |
+| **Monitoring** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | OS info, process list sorted by CPU/memory, disk usage |
+| **Interactive Shell** | `ssh_shell`, `ssh_shell_read`, `ssh_shell_write`, `ssh_shell_resize`, `ssh_shell_close`, `ssh_shell_list` | Full PTY support with `expect` pattern matching, ANSI stripping, `tailLines` snapshots, `peek` reads, and `keepAlive` heartbeats |
+| **Resources** | `mcp://ssh/shell/{shellId}/output`, `mcp://ssh/sessions`, `mcp://ssh/shells` | MCP resources for active session state and real-time shell output updates |
 | **Kubernetes** | `ssh_k8s_list_pods`, `ssh_k8s_pod_logs`, `ssh_k8s_pod_exec`, `ssh_k8s_pod_cp`, `ssh_k8s_arthas_attach` | Full pod management and Java diagnostics via Arthas. Supports local or remote execution. |
 
 ### Kubernetes Multi-Executor (v2.0)
 
 `ssh-mcp` v2.0 introduces a **Multi-Executor** architecture for Kubernetes tools. This solves the "Permission Denied" issue in strict PaaS environments where SSH users lack root/kubectl access.
 
-1.  **Remote Executor (SSH)**: The default mode. Connects via SSH and runs `kubectl` on the remote host.
-2.  **Local Executor (Direct)**: Use `k8s_connect` with your `kubeconfig` content. The MCP server will run `kubectl` locally on your machine, bypassing SSH entirely. This is ideal for managing clusters where you only have Root access via a proprietary PaaS web shell.
+1. **Remote Executor (SSH)**: The default mode. Connects via SSH and runs `kubectl` on the remote host.
+2. **Local Executor (Direct)**: Use `k8s_connect` with your `kubeconfig` content. The MCP server will run `kubectl` locally on your machine, bypassing SSH entirely. This is ideal for managing clusters where you only have Root access via a proprietary PaaS web shell.
 
 ### Quick Start
 
@@ -65,11 +68,14 @@ Then point your MCP client to `/absolute/path/to/ssh-mcp/build/index.js`.
 
 ### Dashboard UI
 
-Once the MCP server is started by your client (Claude, Cursor, etc.), the built-in UI is automatically available at:
+Once the MCP server is started by your client (Claude, Cursor, etc.), the built-in browser console is available by default at:
 
 👉 **[http://localhost:12222](http://localhost:12222)**
 
-This UI bundles:
+If port `12222` is already in use, `ssh-mcp` automatically tries the next available port. Check the startup logs for the actual UI address.
+
+This console bundles:
+
 - **💻 Terminal (WebShell)**: Interactive PTY console with live color rendering.
 - **📂 Files (SFTP Explorer)**: Visual file navigator for remote directory trees.
 - **☸️ Kubernetes**: Pod management, real-time logs, and Arthas diagnostic panel.
@@ -77,16 +83,20 @@ This UI bundles:
 
 ### Smart Features for Agents
 
-- **`expect` Matching**: `ssh_shell_read` can wait for a specific regex pattern (like a prompt) before returning.
-- **ANSI Stripping**: Optional stripping of terminal color codes to save tokens and improve AI readability.
-- **Read Cursor**: Prevents `expect` from matching old output from previous commands.
-- **Keep-Alive**: Optional heartbeats (`\x00`) to prevent `TMOUT` session disconnects on strict servers.
+- **Stateful sessions**: Reuse the same SSH connection across multiple tool calls.
+- **Interactive PTY**: Continue input in long-running shell programs instead of executing isolated commands.
+- **Shell output streaming**: Subscribe to `mcp://ssh/shell/{shellId}/output` for real-time shell updates.
+- **`expect` matching**: `ssh_shell_read` can wait for a specific regex pattern, such as a prompt, before returning.
+- **ANSI stripping**: Optional stripping of terminal color codes to save tokens and improve AI readability.
+- **Read cursor / peek reads**: Inspect current terminal state without accidentally matching stale output.
+- **Keep-alive**: Optional heartbeats (`\x00`) to prevent `TMOUT` session disconnects on strict servers.
 
 ### MCP Configuration Examples
 
 #### Claude Desktop / Claude Code
 
 `.mcp.json`:
+
 ```json
 {
   "mcpServers": {
