@@ -845,8 +845,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const port = 12222;
 
-  // Start HTTP server. If port 12222 is busy, startHttpServer will automatically find the next available port.
-  startHttpServer(port);
+  // Start or reuse the browser console service for this machine.
+  const httpServer = await startHttpServer(port);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -869,15 +869,16 @@ async function main() {
   console.error("║              SSH-MCP Server — READY                     ║");
   console.error("╠══════════════════════════════════════════════════════════╣");
   console.error("║  Protocol : stdio (MCP JSON-RPC)                        ║");
-  console.error("║  REST/WS  : http://localhost:12222 (or next available)  ║");
-  console.error("║  Web UI   : http://localhost:12222                      ║");
+  console.error(`║  REST/WS  : http://localhost:${httpServer.port}                      ║`);
+  console.error(`║  Web UI   : http://localhost:${httpServer.port}                      ║`);
+  console.error(`║  UI Mode  : ${httpServer.reused ? "reuse existing" : "started local"}                         ║`);
   console.error("╠══════════════════════════════════════════════════════════╣");
   console.error("║  Add to your MCP client (e.g. Claude Desktop):          ║");
   console.error("╚══════════════════════════════════════════════════════════╝");
   console.error(JSON.stringify(mcpConfig, null, 2));
   console.error("────────────────────────────────────────────────────────────");
 
-  // Restore persisted sessions from previous run
+  // Remove any legacy on-disk session store from older versions.
   await loadAndReconnectSessions();
 }
 

@@ -20,7 +20,7 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 let nextId = 1;
 const sessions = new Map<string, Session>();
 
-// 凭据持久化存储结构
+// Runtime-only credentials kept in memory for the life of this process.
 interface StoredCredentials {
   id: string;
   type: "ssh" | "k8s";
@@ -46,89 +46,28 @@ function getStoredCredentials(session: Session): StoredCredentials | undefined {
   return (session as any)._creds as StoredCredentials | undefined;
 }
 
-// ======== 持久化读写 ========
+// Sensitive credentials must not survive process exit. If an older version
+// created a sessions-store.json file, remove it proactively.
+function removeLegacySessionsStore() {
+  try {
+    if (fs.existsSync(SESSIONS_STORE_PATH)) {
+      fs.unlinkSync(SESSIONS_STORE_PATH);
+      console.error("[session] Removed legacy sessions-store.json to avoid persisting sensitive credentials.");
+    }
+  } catch (e) {
+    console.error("[session] Failed to remove legacy sessions store:", e);
+  }
+}
 
 function saveSessionsStore() {
-  try {
-    const stored: StoredCredentials[] = [];
-    for (const [id, session] of sessions) {
-      const cred = (session as any)._creds as StoredCredentials | undefined;
-      if (cred) stored.push({ ...cred, id });
-    }
-    fs.writeFileSync(SESSIONS_STORE_PATH, JSON.stringify(stored, null, 2), "utf-8");
-  } catch (e) {
-    console.error("[session] Failed to save sessions store:", e);
-  }
+  removeLegacySessionsStore();
 }
 
-function loadStoredCredentials(): StoredCredentials[] {
-  try {
-    if (!fs.existsSync(SESSIONS_STORE_PATH)) return [];
-    const raw = fs.readFileSync(SESSIONS_STORE_PATH, "utf-8");
-    return JSON.parse(raw) as StoredCredentials[];
-  } catch {
-    return [];
-  }
-}
-
-/** 启动时读取持久化文件并逐一重连，失败则跳过 */
 export async function loadAndReconnectSessions(): Promise<void> {
-  const stored = loadStoredCredentials();
-  if (stored.length === 0) return;
-  console.error(`[session] Restoring ${stored.length} persisted session(s)...`);
-
-  for (const cred of stored) {
-    try {
-      if (cred.type === "ssh") {
-        const client = await sshConnect(cred, 10000);
-        const session: Session = {
-          id: cred.id,
-          type: "ssh",
-          client,
-          label: cred.label,
-          host: cred.host,
-          port: cred.port,
-          username: cred.username,
-          createdAt: Date.now(),
-          lastUsedAt: Date.now(),
-          kubectlPath: cred.kubectlPath,
-          kubeconfig: cred.kubeconfig,
-        };
-        (session as any)._creds = cred;
-        sessions.set(session.id, session);
-        registerClientListeners(session.id, client);
-        console.error(`[session] Restored SSH: ${cred.label} (${cred.id})`);
-      } else if (cred.type === "k8s" && cred.kubeconfigContent) {
-        // Restore K8s local session
-        const k8sPath = path.join(KUBECONFIG_DIR, `kubeconfig_${cred.id}`);
-        fs.writeFileSync(k8sPath, cred.kubeconfigContent, "utf-8");
-        const session: Session = {
-          id: cred.id,
-          type: "k8s",
-          label: cred.label,
-          host: "localhost",
-          port: 0,
-          username: "local",
-          createdAt: Date.now(),
-          lastUsedAt: Date.now(),
-          kubeconfigPath: k8sPath,
-        };
-        (session as any)._creds = cred;
-        sessions.set(session.id, session);
-        console.error(`[session] Restored K8s: ${cred.label} (${cred.id})`);
-      }
-      startCleanup();
-    } catch (e: any) {
-      console.error(`[session] Failed to restore ${cred.label}: ${e.message}`);
-    }
-  }
-  // 重新保存（跳过失败的连接）
-  saveSessionsStore();
+  removeLegacySessionsStore();
 }
 
-// ======== 工具函数 ========
-
-function registerClientListeners(sessionId: string, client: any) {
+function registerClientListeners(sessionId: string, client: Client) {
   const onDisconnect = (reason: string) => {
     const session = sessions.get(sessionId);
     if (!session) return;
@@ -143,7 +82,7 @@ function registerClientListeners(sessionId: string, client: any) {
     saveSessionsStore();
   };
 
-  client.on("error", (err: any) => onDisconnect(`error (${err.message})`));
+  client.on("error", (err: Error) => onDisconnect(`error (${err.message})`));
   client.on("end", () => onDisconnect("end"));
   client.on("close", () => onDisconnect("close"));
 }
@@ -175,13 +114,13 @@ function startCleanup() {
             session.client.removeAllListeners("end");
             session.client.removeAllListeners("close");
             session.client.end();
-          } catch { /* ignore */ }
+          } catch {}
           try {
             const { cleanShellsBySession } = await import("./handlers/shell.js");
             cleanShellsBySession(id);
           } catch {}
         } else if (session.type === "k8s" && session.kubeconfigPath) {
-          try { fs.unlinkSync(session.kubeconfigPath); } catch { /* ignore */ }
+          try { fs.unlinkSync(session.kubeconfigPath); } catch {}
         }
         sessions.delete(id);
         changed = true;
@@ -256,7 +195,6 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
     kubeconfig: creds.kubeconfig,
   };
 
-  // 存储凭据供持久化使用
   const storedCred: StoredCredentials = {
     id,
     type: "ssh",
@@ -282,13 +220,13 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
 export async function createK8sSession(args: K8sConnectArgs): Promise<Session> {
   const id = generateId("k8s");
   const k8sPath = path.join(KUBECONFIG_DIR, `kubeconfig_${id}`);
-  
+
   let kubeconfigContent = args.kubeconfig;
   // If it looks like a file path and exists, read it
   if (args.kubeconfig.length < 512 && fs.existsSync(args.kubeconfig)) {
     kubeconfigContent = fs.readFileSync(args.kubeconfig, "utf-8");
   }
-  
+
   fs.writeFileSync(k8sPath, kubeconfigContent, "utf-8");
 
   const session: Session = {
@@ -355,7 +293,7 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
     existing.client.removeAllListeners("error");
     existing.client.removeAllListeners("end");
     existing.client.removeAllListeners("close");
-    try { existing.client.end(); } catch { /* ignore */ }
+    try { existing.client.end(); } catch {}
   }
 
   existing.client = client;
@@ -394,11 +332,11 @@ export function getSession(sessionId: string): Session | undefined {
 export function disconnectSession(sessionId: string): boolean {
   const session = sessions.get(sessionId);
   if (!session) return false;
-  
+
   if (session.type === "ssh" && session.client) {
-    try { session.client.end(); } catch { /* ignore */ }
+    try { session.client.end(); } catch {}
   } else if (session.type === "k8s" && session.kubeconfigPath) {
-    try { fs.unlinkSync(session.kubeconfigPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(session.kubeconfigPath); } catch {}
   }
 
   sessions.delete(sessionId);
@@ -453,6 +391,6 @@ export async function resolveClient(
   const timeout = args.timeout ?? 30000;
   const client = await sshConnect(args, timeout);
   return fn(client).finally(() => {
-    try { client.end(); } catch { /* ignore */ }
+    try { client.end(); } catch {}
   });
 }

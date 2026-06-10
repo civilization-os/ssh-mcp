@@ -36,8 +36,11 @@ interface SftpFile {
   mtime: number;
 }
 
-const API_BASE = "http://127.0.0.1:12222";
-const WS_BASE = "ws://127.0.0.1:12222";
+const API_BASE = "";
+const WS_BASE =
+  typeof window === "undefined"
+    ? "ws://127.0.0.1:12222"
+    : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
 
 const sessionBadgeStyle: React.CSSProperties = {
   fontSize: "10px",

@@ -50,8 +50,8 @@ export const translations = {
     autoDetect: "自动探测",
     keepCurrentSecret: "留空则保留当前凭据",
     updateFailed: "更新失败",
-    authPasswordSaved: "密码认证",
-    authPrivateKeySaved: "私钥认证",
+    authPasswordSaved: "密码会话",
+    authPrivateKeySaved: "私钥会话",
     host: "主机地址 (Host)",
     port: "端口 (Port)",
     username: "用户名 (Username)",
@@ -72,7 +72,7 @@ export const translations = {
     emptyStateDesc: "请连接一台远程服务器以激活交互终端、SFTP 文件管理、Kubernetes 容器看板及系统资源负载监控。",
     // Confirm delete
     confirmDeleteTitle: "确认断开并删除会话？",
-    confirmDeleteHint: "此操作将断开 SSH 连接并从持久化存储中移除，无法撤销。",
+    confirmDeleteHint: "此操作将断开 SSH 连接并清除当前运行中的会话，无法撤销。",
     confirmDeleteBtn: "确认删除",
     // SFTP operations
     sftpMkdir: "新建文件夹",
@@ -144,8 +144,8 @@ export const translations = {
     autoDetect: "Auto-detect",
     keepCurrentSecret: "Leave blank to keep the current credential",
     updateFailed: "Update failed",
-    authPasswordSaved: "Password",
-    authPrivateKeySaved: "Private key",
+    authPasswordSaved: "Password session",
+    authPrivateKeySaved: "Private key session",
     host: "Host",
     port: "Port",
     username: "Username",
@@ -166,7 +166,7 @@ export const translations = {
     emptyStateDesc: "Connect to a remote server to enable Interactive WebShell, SFTP file management, Kubernetes dashboard, and System load diagnostics.",
     // Confirm delete
     confirmDeleteTitle: "Disconnect & Remove Session?",
-    confirmDeleteHint: "This will terminate the SSH connection and remove it from persistent storage. This cannot be undone.",
+    confirmDeleteHint: "This will terminate the SSH connection and clear the in-memory session for this runtime. This cannot be undone.",
     confirmDeleteBtn: "Delete Session",
     // SFTP operations
     sftpMkdir: "New Folder",

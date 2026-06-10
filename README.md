@@ -6,7 +6,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/civilization-os/ssh-mcp/pulls)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-7C3AED.svg)](https://modelcontextprotocol.io)
 
-> A stateful server operations runtime for AI agents: persistent SSH, interactive PTY, shell output streaming, terminal buffer reading, SFTP, Kubernetes tools, and a built-in browser console.
+> A stateful server operations runtime for AI agents: long-lived SSH, interactive PTY, shell output streaming, terminal buffer reading, SFTP, Kubernetes tools, and a built-in browser console.
 
 🌐 **Other languages:** [中文](README.zh-CN.md)
 
@@ -21,6 +21,8 @@ It is not just a remote command executor. It keeps long-lived SSH sessions, expo
 This makes it suitable for Claude Code, Codex, Cursor, and other AI coding agents that need long-lived, observable, and controllable interactions with remote Linux servers while keeping the human user able to observe, verify, and take over at any time.
 
 It also includes a built-in browser operations console for visual terminal access, SFTP file management, Kubernetes operations, and system monitoring.
+
+For security, `ssh-mcp` keeps SSH passwords, private keys, and local kubeconfig content in process memory only. They are not persisted to disk and are not restored after process restart.
 
 ### Features
 
@@ -72,7 +74,9 @@ Once the MCP server is started by your client (Claude, Cursor, etc.), the built-
 
 👉 **[http://localhost:12222](http://localhost:12222)**
 
-If port `12222` is already in use, `ssh-mcp` automatically tries the next available port. Check the startup logs for the actual UI address.
+If another `ssh-mcp` process is already serving the browser console, new agent processes will reuse that existing UI service instead of starting another one.
+
+If port `12222` is occupied by a different process and no existing `ssh-mcp` UI is found, `ssh-mcp` automatically tries the next available port. Check the startup logs for the actual UI address.
 
 This console bundles:
 
@@ -127,7 +131,7 @@ Replace `/path/to/` with your actual build path if installing locally.
 src/
 ├── index.ts          # Entry: server init, tool registration, request routing
 ├── server.ts         # HTTP Server: REST API, WebSockets, and Static UI hosting
-├── session.ts        # Session manager (persistent connection pool)
+├── session.ts        # Session manager (runtime connection pool)
 ├── types.ts          # TypeScript interfaces & validators
 └── handlers/
     ├── sftp.ts       # Full SFTP operations

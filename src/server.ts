@@ -16,9 +16,37 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uiDistPath = path.resolve(__dirname, "..", "ui", "dist");
 const serve = sirv(uiDistPath, { dev: false, single: true });
 
-export function startHttpServer(initialPort: number = 12222) {
-  let currentPort = initialPort;
+export interface HttpServerStartResult {
+  port: number;
+  reused: boolean;
+  server?: http.Server;
+}
+
+async function isExistingSshMcpServer(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/sessions`);
+    if (!response.ok) return false;
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) return false;
+    const payload = await response.json();
+    return Array.isArray(payload);
+  } catch {
+    return false;
+  }
+}
+
+export async function startHttpServer(initialPort: number = 12222): Promise<HttpServerStartResult> {
   const maxRetries = 10;
+
+  for (let offset = 0; offset <= maxRetries; offset++) {
+    const port = initialPort + offset;
+    if (await isExistingSshMcpServer(port)) {
+      console.error(`[REST/WebSocket Server] Reusing existing ssh-mcp UI at http://127.0.0.1:${port}`);
+      return { port, reused: true };
+    }
+  }
+
+  let currentPort = initialPort;
   let retryCount = 0;
 
   const server = http.createServer(async (req, res) => {
@@ -503,21 +531,29 @@ export function startHttpServer(initialPort: number = 12222) {
     }
   });
 
-  server.on("error", (err: any) => {
-    if (err.code === "EADDRINUSE" && retryCount < maxRetries) {
-      retryCount++;
-      currentPort++;
-      console.error(`[REST Server] Port ${currentPort - 1} in use, retrying on ${currentPort}...`);
-      server.listen(currentPort, "127.0.0.1");
-    } else {
-      console.error(`[REST Server] Failed to start: ${err.message}`);
-      // Don't throw/exit to keep the main MCP stdio channel alive
-    }
-  });
+  return await new Promise<HttpServerStartResult>((resolve) => {
+    server.on("error", async (err: any) => {
+      if (err.code === "EADDRINUSE" && retryCount < maxRetries) {
+        const occupiedPort = currentPort;
+        if (await isExistingSshMcpServer(occupiedPort)) {
+          console.error(`[REST/WebSocket Server] Reusing existing ssh-mcp UI at http://127.0.0.1:${occupiedPort}`);
+          resolve({ port: occupiedPort, reused: true });
+          return;
+        }
 
-  server.listen(currentPort, "127.0.0.1", () => {
-    console.error(`[REST/WebSocket Server] Running at http://127.0.0.1:${currentPort}`);
-  });
+        retryCount++;
+        currentPort++;
+        console.error(`[REST Server] Port ${occupiedPort} in use by another process, retrying on ${currentPort}...`);
+        server.listen(currentPort, "127.0.0.1");
+      } else {
+        console.error(`[REST Server] Failed to start: ${err.message}`);
+        resolve({ port: currentPort, reused: false });
+      }
+    });
 
-  return server;
+    server.listen(currentPort, "127.0.0.1", () => {
+      console.error(`[REST/WebSocket Server] Running at http://127.0.0.1:${currentPort}`);
+      resolve({ port: currentPort, reused: false, server });
+    });
+  });
 }
