@@ -90,7 +90,7 @@ npm run build
 - **Shell 输出流**：支持订阅 `mcp://ssh/shell/{shellId}/output` 获取实时终端输出。
 - **`expect` 匹配**：等待指定 Prompt 或正则出现后再返回。
 - **ANSI 剥离**：减少终端颜色控制符，提高 AI 可读性。
-- **Read Cursor / Peek 读取**：避免误读历史输出。
+- **Read Cursor / Peek 读取**：`ssh_shell_read` 默认返回自上次 `ssh_shell_write` 以来累计的增量输出；重复读取会保持同一增量窗口，直到下一次写入或显式 `clear: true`。如需完整缓冲区快照，请使用 `peek: true`。
 - **KeepAlive 心跳**：防止严格服务器因 `TMOUT` 自动断开。
 
 ### MCP 配置示例

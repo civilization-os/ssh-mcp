@@ -372,7 +372,8 @@ export async function handleShellRead(args: SshShellReadArgs) {
     await waitForQuiet(shell, waitMs, args.maxWaitMs, args.expect);
   }
 
-  let output = shell.buffer;
+  const start = args.peek ? 0 : shell.readCursor;
+  let output = shell.buffer.slice(start);
   const maxLen = args.maxLength ?? 50000;
   
   if (args.stripAnsi) {
@@ -400,9 +401,6 @@ export async function handleShellRead(args: SshShellReadArgs) {
   if ((args.clear ?? false) && !args.peek) {
     shell.buffer = "";
     shell.readCursor = 0;
-  } else if (!args.peek) {
-    // Advance cursor to mark all current content as read/acknowledged
-    shell.readCursor = shell.buffer.length;
   }
 
   // Heuristic for prompt detection (strip ANSI before checking)
@@ -413,7 +411,8 @@ export async function handleShellRead(args: SshShellReadArgs) {
     shellId: args.shellId,
     status: shell.closed ? "CLOSED" : "OPEN",
     promptShown,
-    bufferSize: output.length,
+    bufferSize: shell.buffer.length,
+    unreadSize: output.length,
     truncated,
     content: text || "(no output)"
   };

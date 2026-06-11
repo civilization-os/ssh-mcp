@@ -92,7 +92,7 @@ This console bundles:
 - **Shell output streaming**: Subscribe to `mcp://ssh/shell/{shellId}/output` for real-time shell updates.
 - **`expect` matching**: `ssh_shell_read` can wait for a specific regex pattern, such as a prompt, before returning.
 - **ANSI stripping**: Optional stripping of terminal color codes to save tokens and improve AI readability.
-- **Read cursor / peek reads**: Inspect current terminal state without accidentally matching stale output.
+- **Read cursor / peek reads**: `ssh_shell_read` returns the output accumulated since the last `ssh_shell_write` by default; repeated reads keep the same incremental window until the next write or `clear: true`. Use `peek: true` for a full buffer snapshot.
 - **Keep-alive**: Optional heartbeats (`\x00`) to prevent `TMOUT` session disconnects on strict servers.
 
 ### MCP Configuration Examples
