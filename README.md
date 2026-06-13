@@ -40,7 +40,31 @@ For security, `ssh-mcp` keeps SSH passwords, private keys, and local kubeconfig 
 `ssh-mcp` v2.0 introduces a **Multi-Executor** architecture for Kubernetes tools. This solves the "Permission Denied" issue in strict PaaS environments where SSH users lack root/kubectl access.
 
 1. **Remote Executor (SSH)**: The default mode. Connects via SSH and runs `kubectl` on the remote host.
-2. **Local Executor (Direct)**: Use `k8s_connect` with your `kubeconfig` content. The MCP server will run `kubectl` locally on your machine, bypassing SSH entirely. This is ideal for managing clusters where you only have Root access via a proprietary PaaS web shell.
+2. **Local Executor (Direct)**: Use `k8s_connect` with either `kubeconfig` content or direct API server credentials (`server`, CA, client cert/key, or token). The MCP server will generate a temporary kubeconfig and run `kubectl` locally, bypassing SSH entirely. This is ideal for managing clusters where you only have API access or Root access via a proprietary PaaS web shell.
+
+Example `k8s_connect` payload using API server certificates:
+
+```json
+{
+  "name": "prod-cluster",
+  "server": "https://10.0.0.1:6443",
+  "certificateAuthority": "/path/to/ca.crt",
+  "clientCertificate": "/path/to/client.crt",
+  "clientKey": "/path/to/client.key",
+  "namespace": "default"
+}
+```
+
+Example `k8s_connect` payload using a bearer token:
+
+```json
+{
+  "name": "prod-cluster",
+  "server": "https://10.0.0.1:6443",
+  "token": "YOUR_BEARER_TOKEN",
+  "insecureSkipTlsVerify": true
+}
+```
 
 ### Quick Start
 

@@ -259,14 +259,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "k8s_connect",
-      description: "Register a local Kubernetes session using a kubeconfig. Commands will be executed locally on the MCP server host.",
+      description: "Register a local Kubernetes session on the MCP server host. Supports either kubeconfig input or direct API server credentials that will be converted into a temporary kubeconfig.",
       inputSchema: {
         type: "object",
         properties: {
           name: { type: "string", description: "Optional label for the session" },
           kubeconfig: { type: "string", description: "Kubeconfig YAML content or local file path" },
+          server: { type: "string", description: "Kubernetes API server URL, for example https://10.0.0.1:6443" },
+          namespace: { type: "string", description: "Default namespace for the generated kubeconfig context" },
+          insecureSkipTlsVerify: { type: "boolean", description: "Skip API server TLS verification when generating kubeconfig" },
+          serverName: { type: "string", description: "Optional TLS server name override for API server certificate verification" },
+          certificateAuthority: { type: "string", description: "CA certificate local file path or PEM content" },
+          certificateAuthorityData: { type: "string", description: "CA certificate PEM content or base64-encoded PEM" },
+          clientCertificate: { type: "string", description: "Client certificate local file path or PEM content" },
+          clientCertificateData: { type: "string", description: "Client certificate PEM content or base64-encoded PEM" },
+          clientKey: { type: "string", description: "Client private key local file path or PEM content" },
+          clientKeyData: { type: "string", description: "Client private key PEM content or base64-encoded PEM" },
+          token: { type: "string", description: "Bearer token for API server authentication" },
         },
-        required: ["kubeconfig"],
       },
     },
     {
@@ -636,7 +646,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "k8s_connect": {
         if (!validateK8sConnectArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "kubeconfig is required");
+          throw new McpError(ErrorCode.InvalidParams, "Provide either kubeconfig, or server plus token, or server plus clientCertificate/clientKey");
         }
         const session = await createK8sSession(args);
         return {
@@ -671,7 +681,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const lines = sessions.map(s => {
           const alive = Math.floor((Date.now() - s.createdAt) / 1000);
-          return `  ${s.id}  ${s.username}@${s.host}:${s.port}  (${alive}s)`;
+          return `  ${s.id}  ${s.label}  ${s.username}@${s.host}:${s.port}  (${alive}s)`;
         });
         return { content: [{ type: "text", text: `Active sessions (${sessions.length}):\n${lines.join("\n")}` }] };
       }

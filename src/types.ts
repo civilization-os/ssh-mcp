@@ -41,7 +41,18 @@ export interface SshConnectArgs extends SshCredentials {
 
 export interface K8sConnectArgs {
   name?: string;
-  kubeconfig: string; // YAML content or local path
+  kubeconfig?: string; // YAML content or local path
+  server?: string; // Kubernetes API server URL
+  namespace?: string;
+  insecureSkipTlsVerify?: boolean;
+  serverName?: string;
+  certificateAuthority?: string; // Local file path or PEM content
+  certificateAuthorityData?: string; // PEM content or base64-encoded PEM
+  clientCertificate?: string; // Local file path or PEM content
+  clientCertificateData?: string; // PEM content or base64-encoded PEM
+  clientKey?: string; // Local file path or PEM content
+  clientKeyData?: string; // PEM content or base64-encoded PEM
+  token?: string;
 }
 
 export interface SshDisconnectArgs {
@@ -360,7 +371,14 @@ export function validateSshK8sArthasAttachArgs(args: unknown): args is SshK8sArt
 }
 
 export function validateK8sConnectArgs(args: unknown): args is K8sConnectArgs {
-  return isRecord(args) && typeof args.kubeconfig === "string";
+  if (!isRecord(args)) return false;
+  if (typeof args.kubeconfig === "string") return true;
+  if (typeof args.server !== "string") return false;
+  if (typeof args.token === "string") return true;
+
+  const hasClientCert = typeof args.clientCertificate === "string" || typeof args.clientCertificateData === "string";
+  const hasClientKey = typeof args.clientKey === "string" || typeof args.clientKeyData === "string";
+  return hasClientCert && hasClientKey;
 }
 
 export function validateSshK8sPodLogsArgs(args: unknown): boolean {

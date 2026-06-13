@@ -42,6 +42,107 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+function toBase64(value: string): string {
+  return Buffer.from(value, "utf-8").toString("base64");
+}
+
+function looksLikePem(value: string): boolean {
+  return value.includes("-----BEGIN ");
+}
+
+function looksLikeBase64(value: string): boolean {
+  const normalized = value.replace(/\s+/g, "");
+  return normalized.length > 0 && normalized.length % 4 === 0 && /^[A-Za-z0-9+/=]+$/.test(normalized);
+}
+
+function readFileIfPath(value: string): string {
+  if (value.length < 4096 && fs.existsSync(value) && fs.statSync(value).isFile()) {
+    return fs.readFileSync(value, "utf-8");
+  }
+  return value;
+}
+
+function normalizeKubeData(value?: string): string | undefined {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) return undefined;
+  const content = readFileIfPath(normalized).trim();
+  if (looksLikePem(content)) return toBase64(content);
+  if (looksLikeBase64(content)) return content.replace(/\s+/g, "");
+  return toBase64(content);
+}
+
+function buildKubeconfigFromArgs(args: K8sConnectArgs, sessionId: string): string {
+  const server = normalizeOptionalString(args.server);
+  if (!server) {
+    throw new Error("k8s_connect requires either kubeconfig or server");
+  }
+
+  const token = normalizeOptionalString(args.token);
+  const clientCertificateData = normalizeKubeData(args.clientCertificateData ?? args.clientCertificate);
+  const clientKeyData = normalizeKubeData(args.clientKeyData ?? args.clientKey);
+  const certificateAuthorityData = normalizeKubeData(args.certificateAuthorityData ?? args.certificateAuthority);
+
+  if (!token && !(clientCertificateData && clientKeyData)) {
+    throw new Error("k8s_connect direct mode requires token or both clientCertificate and clientKey");
+  }
+
+  const clusterName = `ssh-mcp-cluster-${sessionId}`;
+  const userName = `ssh-mcp-user-${sessionId}`;
+  const contextName = `ssh-mcp-context-${sessionId}`;
+  const lines = [
+    "apiVersion: v1",
+    "kind: Config",
+    "clusters:",
+    `- name: ${clusterName}`,
+    "  cluster:",
+    `    server: ${server}`,
+  ];
+
+  if (args.insecureSkipTlsVerify) {
+    lines.push("    insecure-skip-tls-verify: true");
+  } else if (certificateAuthorityData) {
+    lines.push(`    certificate-authority-data: ${certificateAuthorityData}`);
+  }
+
+  const tlsServerName = normalizeOptionalString(args.serverName);
+  if (tlsServerName) {
+    lines.push(`    tls-server-name: ${tlsServerName}`);
+  }
+
+  lines.push(
+    "users:",
+    `- name: ${userName}`,
+    "  user:"
+  );
+
+  if (token) {
+    lines.push(`    token: ${JSON.stringify(token)}`);
+  } else {
+    lines.push(`    client-certificate-data: ${clientCertificateData}`);
+    lines.push(`    client-key-data: ${clientKeyData}`);
+  }
+
+  lines.push(
+    "contexts:",
+    `- name: ${contextName}`,
+    "  context:",
+    `    cluster: ${clusterName}`,
+    `    user: ${userName}`
+  );
+
+  const namespace = normalizeOptionalString(args.namespace);
+  if (namespace) {
+    lines.push(`    namespace: ${namespace}`);
+  }
+
+  lines.push(
+    `current-context: ${contextName}`,
+    "preferences: {}"
+  );
+
+  return lines.join("\n") + "\n";
+}
+
 function getStoredCredentials(session: Session): StoredCredentials | undefined {
   return (session as any)._creds as StoredCredentials | undefined;
 }
@@ -221,18 +322,19 @@ export async function createK8sSession(args: K8sConnectArgs): Promise<Session> {
   const id = generateId("k8s");
   const k8sPath = path.join(KUBECONFIG_DIR, `kubeconfig_${id}`);
 
-  let kubeconfigContent = args.kubeconfig;
-  // If it looks like a file path and exists, read it
-  if (args.kubeconfig.length < 512 && fs.existsSync(args.kubeconfig)) {
-    kubeconfigContent = fs.readFileSync(args.kubeconfig, "utf-8");
+  let kubeconfigContent = normalizeOptionalString(args.kubeconfig);
+  if (kubeconfigContent) {
+    kubeconfigContent = readFileIfPath(kubeconfigContent);
+  } else {
+    kubeconfigContent = buildKubeconfigFromArgs(args, id);
   }
 
-  fs.writeFileSync(k8sPath, kubeconfigContent, "utf-8");
+  fs.writeFileSync(k8sPath, kubeconfigContent, { encoding: "utf-8", mode: 0o600 });
 
   const session: Session = {
     id,
     type: "k8s",
-    label: args.name ?? "Local K8s Cluster",
+    label: args.name ?? normalizeOptionalString(args.server) ?? "Local K8s Cluster",
     host: "localhost",
     port: 0,
     username: "local",

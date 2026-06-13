@@ -38,7 +38,31 @@
 `ssh-mcp` v2.0 引入了 **Multi-Executor** 架构。这解决了在严苛 PaaS 环境中 SSH 用户缺乏 root/kubectl 权限的问题。
 
 1. **远程执行 (SSH)**：默认模式，通过 SSH 在远程宿主机执行 `kubectl`。
-2. **本地执行 (Direct)**：使用 `k8s_connect` 并提供 `kubeconfig` 内容，MCP Server 将在本地执行 `kubectl`，完全绕过 SSH。
+2. **本地执行 (Direct)**：使用 `k8s_connect` 并提供 `kubeconfig` 内容，或直接提供 `server`、CA、客户端证书/私钥、`token` 等 API Server 凭据。MCP Server 会生成临时 kubeconfig 并在本地执行 `kubectl`，完全绕过 SSH。
+
+使用 API Server 证书直连时，`k8s_connect` 示例：
+
+```json
+{
+  "name": "prod-cluster",
+  "server": "https://10.0.0.1:6443",
+  "certificateAuthority": "/path/to/ca.crt",
+  "clientCertificate": "/path/to/client.crt",
+  "clientKey": "/path/to/client.key",
+  "namespace": "default"
+}
+```
+
+使用 Bearer Token 直连时，`k8s_connect` 示例：
+
+```json
+{
+  "name": "prod-cluster",
+  "server": "https://10.0.0.1:6443",
+  "token": "YOUR_BEARER_TOKEN",
+  "insecureSkipTlsVerify": true
+}
+```
 
 ### 快速开始
 
