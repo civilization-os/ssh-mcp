@@ -260,18 +260,6 @@ export function extractSessionId(args: Record<string, unknown>): string | undefi
   return str(args.sessionId);
 }
 
-export function validateSshExecBgArgs(args: unknown): args is SshExecBgArgs {
-  return isRecord(args) && typeof args.command === "string";
-}
-
-export function validateSshExecStopArgs(args: unknown): args is SshExecStopArgs {
-  return isRecord(args) && typeof args.sessionId === "string" && (typeof args.runId === "string" || typeof args.pid === "number");
-}
-
-export function validateSshExecBgResultArgs(args: unknown): args is SshExecBgResultArgs {
-  return isRecord(args) && typeof args.sessionId === "string" && typeof args.runId === "string";
-}
-
 export function validateSshConnectArgs(args: unknown): args is SshConnectArgs {
   return isRecord(args) && typeof args.host === "string";
 }

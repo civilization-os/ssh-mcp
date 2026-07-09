@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS_STORE_PATH = path.join(__dirname, "..", "sessions-store.json");
+const SESSIONS_META_PATH = path.join(__dirname, "..", "sessions-meta.json");
 const KUBECONFIG_DIR = path.join(os.tmpdir(), "ssh-mcp-kubeconfigs");
 
 // Ensure temp directory exists
@@ -34,6 +35,21 @@ interface StoredCredentials {
   kubectlPath?: string;
   kubeconfig?: string;
   kubeconfigContent?: string;
+}
+
+/** Non-sensitive session metadata persisted across restarts (credentials never saved). */
+interface SessionMeta {
+  id: string;
+  type: "ssh" | "k8s";
+  label: string;
+  host: string;
+  port: number;
+  username: string;
+  createdAt: number;
+  lastUsedAt: number;
+  kubectlPath?: string;
+  kubeconfig?: string;
+  kubeconfigPath?: string;
 }
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -160,12 +176,69 @@ function removeLegacySessionsStore() {
   }
 }
 
-function saveSessionsStore() {
+/** Persist only non-sensitive metadata so sessions survive a restart. */
+function saveSessionMeta() {
   removeLegacySessionsStore();
+  const meta: SessionMeta[] = [];
+  for (const session of sessions.values()) {
+    meta.push({
+      id: session.id,
+      type: session.type,
+      label: session.label,
+      host: session.host,
+      port: session.port,
+      username: session.username,
+      createdAt: session.createdAt,
+      lastUsedAt: session.lastUsedAt,
+      kubectlPath: session.kubectlPath,
+      kubeconfig: session.kubeconfig,
+      kubeconfigPath: session.kubeconfigPath,
+    });
+  }
+  try {
+    fs.writeFileSync(SESSIONS_META_PATH, JSON.stringify(meta, null, 2), "utf-8");
+  } catch (e) {
+    console.error("[session] Failed to save session metadata:", e);
+  }
+}
+
+/** Load metadata from previous run — sessions appear as "disconnected" entries. */
+export function loadSessionMeta(): void {
+  removeLegacySessionsStore();
+  try {
+    if (!fs.existsSync(SESSIONS_META_PATH)) return;
+    const raw = fs.readFileSync(SESSIONS_META_PATH, "utf-8");
+    const meta: SessionMeta[] = JSON.parse(raw);
+    if (!Array.isArray(meta)) return;
+    for (const m of meta) {
+      // Don't re-add if already present
+      if (sessions.has(m.id)) continue;
+      const session: Session = {
+        id: m.id,
+        type: m.type,
+        client: undefined,
+        label: m.label,
+        host: m.host,
+        port: m.port,
+        username: m.username,
+        createdAt: m.createdAt,
+        lastUsedAt: m.lastUsedAt,
+        kubectlPath: m.kubectlPath,
+        kubeconfig: m.kubeconfig,
+        kubeconfigPath: m.kubeconfigPath,
+      };
+      sessions.set(m.id, session);
+    }
+    console.error(`[session] Loaded ${meta.length} session(s) from metadata`);
+  } catch (e) {
+    console.error("[session] Failed to load session metadata:", e);
+  }
 }
 
 export async function loadAndReconnectSessions(): Promise<void> {
-  removeLegacySessionsStore();
+  loadSessionMeta();
+  // Auto-reconnect is intentionally NOT performed — credentials are never persisted.
+  // Users can reconnect from the UI or via ssh_connect.
 }
 
 function registerClientListeners(sessionId: string, client: Client) {
@@ -179,8 +252,9 @@ function registerClientListeners(sessionId: string, client: Client) {
       try { cleanShellsBySession(sessionId); } catch {}
     }).catch(() => {});
 
-    sessions.delete(sessionId);
-    saveSessionsStore();
+    // Keep the session entry so metadata survives restart (user can reconnect)
+    session.client = undefined;
+    saveSessionMeta();
   };
 
   client.on("error", (err: Error) => onDisconnect(`error (${err.message})`));
@@ -216,6 +290,7 @@ function startCleanup() {
             session.client.removeAllListeners("close");
             session.client.end();
           } catch {}
+          session.client = undefined;
           try {
             const { cleanShellsBySession } = await import("./handlers/shell.js");
             cleanShellsBySession(id);
@@ -223,11 +298,11 @@ function startCleanup() {
         } else if (session.type === "k8s" && session.kubeconfigPath) {
           try { fs.unlinkSync(session.kubeconfigPath); } catch {}
         }
-        sessions.delete(id);
+        // Keep metadata entry so it survives restart (user can reconnect)
         changed = true;
       }
     }
-    if (changed) saveSessionsStore();
+    if (changed) saveSessionMeta();
     if (sessions.size === 0 && cleanupTimer) {
       clearInterval(cleanupTimer);
       cleanupTimer = null;
@@ -314,7 +389,7 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
   sessions.set(session.id, session);
   registerClientListeners(session.id, client);
   startCleanup();
-  saveSessionsStore();
+  saveSessionMeta();
   return session;
 }
 
@@ -356,7 +431,7 @@ export async function createK8sSession(args: K8sConnectArgs): Promise<Session> {
 
   sessions.set(id, session);
   startCleanup();
-  saveSessionsStore();
+  saveSessionMeta();
   return session;
 }
 
@@ -410,7 +485,7 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
 
   sessions.set(sessionId, existing);
   registerClientListeners(sessionId, client);
-  saveSessionsStore();
+  saveSessionMeta();
   return existing;
 }
 
@@ -437,12 +512,13 @@ export function disconnectSession(sessionId: string): boolean {
 
   if (session.type === "ssh" && session.client) {
     try { session.client.end(); } catch {}
+    session.client = undefined;
   } else if (session.type === "k8s" && session.kubeconfigPath) {
     try { fs.unlinkSync(session.kubeconfigPath); } catch {}
   }
 
-  sessions.delete(sessionId);
-  saveSessionsStore();
+  // Keep the entry in metadata so it survives restart (allows reconnect)
+  saveSessionMeta();
   return true;
 }
 

@@ -11,7 +11,10 @@
     "build": "npm run build:ui && tsc",
     "build:ui": "cd ui && npm install && npm run build",
     "start": "node build/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
@@ -23,7 +26,9 @@
     "@types/node": "^22.0.0",
     "@types/ssh2": "^1.15.0",
     "@types/ws": "^8.18.1",
-    "typescript": "^5.7.0"
+    "@vitest/coverage-v8": "^4.1.10",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
   },
   "files": [
     "build",

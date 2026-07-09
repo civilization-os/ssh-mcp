@@ -33,10 +33,28 @@ function execQuickCommand(
       let stdout = "";
       let stderr = "";
       let exitCode: number | null = null;
+      let resolved = false;
       
-      const timer = setTimeout(() => {
+      const channelTimer = setTimeout(() => {
         channel.close();
       }, timeoutMs);
+
+      // Safety timeout: if close event never fires, force resolve
+      const safetyTimer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(channelTimer);
+          resolve({ stdout, stderr, exitCode: exitCode ?? -1 });
+        }
+      }, timeoutMs + 5000);
+
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(channelTimer);
+        clearTimeout(safetyTimer);
+        resolve({ stdout, stderr, exitCode });
+      };
 
       channel.on("data", (data: Buffer) => {
         stdout += data.toString("utf-8");
@@ -47,10 +65,8 @@ function execQuickCommand(
       channel.on("exit", (code: number | null) => {
         exitCode = code;
       });
-      channel.on("close", () => {
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode });
-      });
+      channel.on("close", done);
+      channel.on("error", () => done());
     });
   });
 }

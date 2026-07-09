@@ -322,22 +322,63 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
     if (sftpUploadMatch && req.method === "POST") {
       const sessionId = sftpUploadMatch[1];
       const chunks: Buffer[] = [];
-      req.on("data", c => chunks.push(c));
+      let totalSize = 0;
+      const MAX_UPLOAD_SIZE = 500 * 1024 * 1024; // 500MB
+      req.on("data", c => {
+        totalSize += (c as Buffer).length;
+        if (totalSize > MAX_UPLOAD_SIZE) {
+          req.destroy(new Error("Upload too large"));
+          return;
+        }
+        chunks.push(c);
+      });
       req.on("end", async () => {
         try {
           const raw = Buffer.concat(chunks);
-          const rawStr = raw.toString("latin1");
-          const boundary = (req.headers["content-type"] || "").split("boundary=")[1];
-          if (!boundary) throw new Error("No boundary in multipart");
+          const boundaryRaw = Buffer.from("--" + ((req.headers["content-type"] || "").split("boundary=")[1] || ""));
+          if (boundaryRaw.length <= 2) throw new Error("No boundary in multipart");
 
-          // Parse multipart manually
-          const parts = rawStr.split(`--${boundary}`).filter(p => p !== "--\r\n" && p.trim() !== "" && p !== "--");
+          // Parse multipart: split by boundary
+          const parts: Buffer[] = [];
+          let start = 0;
+          while (true) {
+            const idx = raw.indexOf(boundaryRaw, start);
+            if (idx === -1) break;
+            start = idx + boundaryRaw.length;
+            // Skip the trailing -- and newlines
+            if (start >= raw.length) break;
+            if (raw[start] === 45 /* - */ || raw[start] === 13 /* \r */) {
+              const nextEnd = raw.indexOf(boundaryRaw, start);
+              if (nextEnd !== -1) {
+                // There's another boundary — capture the part before it
+                const part = raw.slice(start, nextEnd).toString("utf-8");
+                if (part.includes("name=\"file\"")) {
+                  // Find the double CRLF that separates headers from body
+                  const headerEnd = raw.indexOf(Buffer.from("\r\n\r\n"), start);
+                  if (headerEnd !== -1 && headerEnd < nextEnd) {
+                    const bodyStart = headerEnd + 4;
+                    const bodyEnd = nextEnd - 2; // trim trailing \r\n
+                    if (bodyEnd > bodyStart) {
+                      parts.push(raw.slice(bodyStart, bodyEnd));
+                    }
+                  }
+                }
+              }
+              break;
+            }
+          }
+
+          // Extract text parts the simpler way: find "path" and "file" fields
+          const bodyStr = raw.toString("utf-8");
+          const textParts = bodyStr.split(boundaryRaw.toString("utf-8"))
+            .filter(p => !p.startsWith("--") && p.trim());
+
           let uploadPath = "";
           let fileBuffer: Buffer | null = null;
 
-          for (const part of parts) {
-            const [rawHead, ...bodyParts] = part.split("\r\n\r\n");
-            const body = bodyParts.join("\r\n\r\n").replace(/\r\n$/, "");
+          for (const p of textParts) {
+            const [rawHead, ...bodyLines] = p.split("\r\n\r\n");
+            const body = bodyLines.join("\r\n\r\n").replace(/\r\n$/, "").trimEnd();
             if (rawHead.includes("name=\"path\"")) {
               uploadPath = body;
             } else if (rawHead.includes("name=\"file\"")) {
@@ -345,16 +386,29 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
             }
           }
 
+          // Fallback: if we couldn't find file via text parsing, try buffer parsing
+          if (!fileBuffer && parts.length > 0) {
+            fileBuffer = parts[0]; // use the first binary part found
+          }
+
           if (!uploadPath || !fileBuffer) throw new Error("Missing path or file in upload");
 
-          const { handleWriteFile } = await import("./handlers/sftp.js");
-          const result = await handleWriteFile({
-            sessionId,
-            path: uploadPath,
-            content: fileBuffer.toString("base64")
-          }) as any;
-          res.writeHead(result.isError ? 400 : 200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
+          // Write the file directly via SFTP — bypass handleWriteFile to avoid text encoding
+          const { resolveClient } = await import("./session.js");
+          await resolveClient({ sessionId }, async (client: any) => {
+            return new Promise((resolve, reject) => {
+              client.sftp((err: any, sftp: any) => {
+                if (err) return reject(err);
+                const stream = sftp.createWriteStream(uploadPath);
+                stream.on("close", () => { try { sftp.end(); } catch {} resolve(undefined); });
+                stream.on("error", (e: any) => { try { sftp.end(); } catch {} reject(e); });
+                stream.end(fileBuffer);
+              });
+            });
+          });
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ content: [{ type: "text", text: `Uploaded ${fileBuffer.length} bytes to ${uploadPath}` }] }));
         } catch (err: any) {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ isError: true, error: err.message }));

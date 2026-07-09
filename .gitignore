@@ -3,4 +3,6 @@ build/
 .claude/
 *.log
 sessions-store.json
+sessions-meta.json
 .mcp.json
+coverage/

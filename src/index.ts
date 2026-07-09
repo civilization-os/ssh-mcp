@@ -104,11 +104,6 @@ const k8sConfigFields = {
   kubeconfig: { type: "string" as const, description: "Optional custom kubeconfig path on the remote host" },
 };
 
-const sessionAuthFields = {
-  sessionId: { type: "string" as const, description: "Session ID from ssh_connect (alternative to host/password)" },
-  ...authFields,
-};
-
 // --- Server ---
 
 const server = new Server(

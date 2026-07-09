@@ -26,6 +26,7 @@ interface ShellSession {
 const shells = new Map<string, ShellSession>();
 let shellIdCounter = 0;
 const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB per shell
+const MAX_SHELLS = 50; // hard limit to prevent resource exhaustion
 
 function generateShellId(): string {
   return `sh_${Date.now()}_${++shellIdCounter}`;
@@ -182,6 +183,11 @@ export function listActiveShells() {
 export function hasActiveShells(sessionId: string): boolean {
   for (const shell of shells.values()) {
     if (shell.sessionId === sessionId && !shell.closed) {
+      // keepAlive-only shells with no WebSocket clients are eligible for cleanup.
+      // Without this check, orphaned keepAlive shells keep the session alive forever.
+      if (shell.keepAlive && (!shell.wsClients || shell.wsClients.size === 0)) {
+        continue;
+      }
       return true;
     }
   }
@@ -195,6 +201,12 @@ export async function handleShellCreate(args: SshShellArgs) {
   if (!session || session.type !== "ssh" || !session.client) {
     return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found or is not an SSH session` }], isError: true };
   }
+
+  // Enforce maximum concurrent shells limit
+  if (shells.size >= MAX_SHELLS) {
+    return { content: [{ type: "text" as const, text: `Error: Too many active shells (max ${MAX_SHELLS}). Close an existing shell first.` }], isError: true };
+  }
+
   const client = session.client;
 
   const shellId = generateShellId();
@@ -337,14 +349,18 @@ export async function handleShellWrite(args: SshShellWriteArgs) {
   }
 
   return new Promise<ToolResult>((resolve) => {
-    // Before writing, update the cursor to ignore any previous output for future expects
-    shell.readCursor = shell.buffer.length;
+    // Capture the buffer length before the write, so any data arriving between
+    // now and the callback is treated as output from this command.
+    const preWriteLen = shell.buffer.length;
     
     shell.channel.stdin.write(input, "utf-8", (err: Error | null | undefined) => {
       if (err) {
         resolve({ content: [{ type: "text" as const, text: `Error writing to shell: ${err.message}` }], isError: true });
         return;
       }
+      // Advance cursor past pre-existing data so subsequent reads only see
+      // output produced after this write was queued.
+      shell.readCursor = Math.max(shell.readCursor, preWriteLen);
       resolve({
         content: [{
           type: "text" as const,
@@ -445,6 +461,17 @@ export async function handleShellClose(args: SshShellCloseArgs) {
   const shell = shells.get(args.shellId);
   if (!shell) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' not found` }], isError: true };
+  }
+
+  // Notify and close all WebSocket clients
+  if (shell.wsClients) {
+    for (const ws of shell.wsClients) {
+      try {
+        ws.send("\r\n[Shell closed by server]\r\n");
+        ws.close(1000, "Shell closed");
+      } catch { /* ignore */ }
+    }
+    shell.wsClients.clear();
   }
 
   if (!shell.closed) {
