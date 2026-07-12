@@ -29,10 +29,11 @@ interface ShellSession {
 
 interface SftpFile {
   name: string;
-  type: "file" | "dir";
+  type: "file" | "dir" | "symlink";
   size: number;
   mode: string;
   mtime: number;
+  linkTarget?: string;
 }
 
 const API_BASE = "";
@@ -1217,7 +1218,8 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
         const parsedFiles = JSON.parse(data.content[0].text);
         // Sort: dirs first, then files, alphabetical
         parsedFiles.sort((a: SftpFile, b: SftpFile) => {
-          if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+          const rank = (t: string) => t === "dir" ? 0 : t === "symlink" ? 1 : 2;
+          if (rank(a.type) !== rank(b.type)) return rank(a.type) - rank(b.type);
           return a.name.localeCompare(b.name);
         });
         setFiles(parsedFiles);
@@ -1474,7 +1476,7 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                 <th style={{ padding: "10px 12px" }}>{t("fileName")}</th>
                 <th style={{ padding: "10px 12px", width: "90px" }}>{t("fileSize")}</th>
                 <th style={{ padding: "10px 12px", width: "160px" }}>{t("fileTime")}</th>
-                <th style={{ padding: "10px 12px", width: "160px", textAlign: "right" }}>{t("sftpActions")}</th>
+                <th style={{ padding: "10px 12px", width: "200px", textAlign: "right" }}>{t("sftpActions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1496,7 +1498,7 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                     <td style={{ padding: "10px 12px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         <span style={{ fontSize: "16px" }}>
-                          {file.type === "dir" ? "📁" : getFileIcon(file.name)}
+                          {file.type === "dir" ? "📁" : file.type === "symlink" ? "🔗" : getFileIcon(file.name)}
                         </span>
                         <span style={{
                           fontWeight: file.type === "dir" ? 500 : 400,
@@ -1504,6 +1506,11 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                         }}>
                           {file.name}
                         </span>
+                        {file.type === "symlink" && file.linkTarget && (
+                          <span style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))", fontFamily: "monospace" }}>
+                            → {file.linkTarget}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td style={{ padding: "10px 12px", color: "hsl(var(--muted-foreground))", fontFamily: "monospace", fontSize: "12px" }}>
@@ -1513,35 +1520,32 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                       {new Date(file.mtime * 1000).toLocaleString()}
                     </td>
                     <td style={{ padding: "8px 12px", textAlign: "right" }}>
-                      <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }} onClick={e => e.stopPropagation()}>
-                        {/* Download (files only) */}
-                        {file.type === "file" && (
+                      <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", alignItems: "center" }} onClick={e => e.stopPropagation()}>
+                        {/* Download (files and symlinks) */}
+                        {(file.type === "file" || file.type === "symlink") && (
                           <button
                             title={t("sftpDownload")}
                             onClick={() => handleDownload(file)}
-                            className="shadcn-btn shadcn-btn-outline"
-                            style={{ padding: "4px 8px", fontSize: "11px", height: "24px" }}
+                            className="shadcn-btn shadcn-btn-underline"
                           >
-                            ⬇ {t("sftpDownload")}
+                            ↓ {t("sftpDownload")}
                           </button>
                         )}
                         {/* Rename */}
                         <button
                           title={t("sftpRename")}
                           onClick={() => { setRenameTarget(file); setRenameValue(file.name); }}
-                          className="shadcn-btn shadcn-btn-outline"
-                          style={{ padding: "4px 8px", fontSize: "11px", height: "24px" }}
+                          className="shadcn-btn shadcn-btn-underline"
                         >
-                          ✏ {t("sftpRename")}
+                          — {t("sftpRename")}
                         </button>
                         {/* Delete */}
                         <button
                           title={t("sftpDelete")}
                           onClick={() => handleDelete(file)}
-                          className="shadcn-btn shadcn-btn-outline"
-                          style={{ padding: "4px 8px", fontSize: "11px", height: "24px" }}
+                          className="shadcn-btn shadcn-btn-underline-destructive"
                         >
-                          🗑 {t("sftpDelete")}
+                          {t("sftpDelete")}
                         </button>
                       </div>
                     </td>

@@ -204,16 +204,29 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
         const lines = result.content[0].text.split("\n").filter(Boolean);
         const filesList = lines.map(line => {
           const isDir = line.startsWith("d");
+          const isSymlink = line.startsWith("l");
           const rest = line.substring(11).trim();
           const cols = rest.split(/\s+/);
           const size = parseInt(cols[0], 10);
           const dateStr = `${cols[1]} ${cols[2]}`;
-          const name = cols.slice(3).join(" ");
+          const fullName = cols.slice(3).join(" ");
+          
+          let name = fullName;
+          let linkTarget: string | undefined;
+          if (isSymlink) {
+            const arrowIdx = fullName.indexOf(" -> ");
+            if (arrowIdx !== -1) {
+              name = fullName.substring(0, arrowIdx);
+              linkTarget = fullName.substring(arrowIdx + 4);
+            }
+          }
+          
           return {
             name,
-            type: isDir ? "dir" : "file",
+            type: isDir ? "dir" : isSymlink ? "symlink" : "file",
             size: isNaN(size) ? 0 : size,
-            mtime: Math.floor(new Date(dateStr).getTime() / 1000) || 0
+            mtime: Math.floor(new Date(dateStr).getTime() / 1000) || 0,
+            ...(linkTarget !== undefined ? { linkTarget } : {}),
           };
         });
 

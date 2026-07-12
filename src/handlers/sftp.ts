@@ -76,22 +76,37 @@ export async function handleWriteFile(args: SshFileWriteArgs) {
 
 export async function handleListDir(args: SshFileListArgs) {
   const result = await resolveClient(args, (client) =>
-    withSftp(client, args.timeout ?? 30000, (sftp) => {
-      return new Promise<string>((resolve, reject) => {
-        sftp.readdir(args.path, (err, list) => {
-          if (err) { reject(err); return; }
-          const lines = list.map(item => {
-            const type = item.attrs.isDirectory() ? "d" : item.attrs.isSymbolicLink() ? "l" : "-";
-            const perms = modeToString(item.attrs.mode);
-            const size = item.attrs.size.toString().padStart(10);
-            const mtime = new Date(item.attrs.mtime * 1000).toISOString().replace("T", " ").substring(0, 19);
-            const link = item.attrs.isSymbolicLink() ? ` -> ${item.longname?.match(/->\s*(.+)/)?.[1] ?? ""}` : "";
-            return `${type}${perms} ${size} ${mtime} ${item.filename}${link}`;
-          });
-          // also include "." and ".." with summary stats
-          resolve(lines.join("\n"));
-        });
+    withSftp(client, args.timeout ?? 30000, async (sftp) => {
+      // 1. readdir to get file list
+      const list = await new Promise<any[]>((resolve, reject) => {
+        sftp.readdir(args.path, (err, entries) => err ? reject(err) : resolve(entries));
       });
+
+      // 2. For symlinks, call readlink() in parallel to get targets reliably
+      const symlinkTargets = new Map<string, string>();
+      await Promise.all(list.map(item => {
+        if (!item.attrs.isSymbolicLink()) return Promise.resolve();
+        const fullPath = args.path.replace(/\/$/, "") + "/" + item.filename;
+        return new Promise<void>(resolve => {
+          sftp.readlink(fullPath, (err, target) => {
+            if (!err && target) symlinkTargets.set(item.filename, target);
+            resolve();
+          });
+        });
+      }));
+
+      // 3. Build text lines
+      const lines = list.map(item => {
+        const type = item.attrs.isDirectory() ? "d" : item.attrs.isSymbolicLink() ? "l" : "-";
+        const perms = modeToString(item.attrs.mode);
+        const size = item.attrs.size.toString().padStart(10);
+        const mtime = new Date(item.attrs.mtime * 1000).toISOString().replace("T", " ").substring(0, 19);
+        const link = item.attrs.isSymbolicLink()
+          ? ` -> ${symlinkTargets.get(item.filename) ?? ""}`
+          : "";
+        return `${type}${perms} ${size} ${mtime} ${item.filename}${link}`;
+      });
+      return lines.join("\n");
     })
   ) as string;
 
