@@ -20,7 +20,6 @@ import { fileURLToPath } from "url";
 
 import {
   createSession,
-  createK8sSession,
   disconnectSession,
   listSessions,
   loadAndReconnectSessions,
@@ -40,13 +39,7 @@ import {
   handleProcesses,
   handleDiskUsage,
 } from "./handlers/system.js";
-import {
-  handleK8sListPods,
-  handleK8sPodLogs,
-  handleK8sPodExec,
-  handleK8sPodCp,
-  handleK8sArthasAttach,
-} from "./handlers/k8s.js";
+
 import {
   handleShellCreate,
   handleShellWrite,
@@ -77,12 +70,6 @@ import {
   validateSshShellReadArgs,
   validateSshShellResizeArgs,
   validateSshShellCloseArgs,
-  validateK8sConnectArgs,
-  validateSshK8sListPodsArgs,
-  validateSshK8sPodLogsArgs,
-  validateSshK8sPodExecArgs,
-  validateSshK8sPodCpArgs,
-  validateSshK8sArthasAttachArgs,
   extractCredentials,
   extractSessionId,
 } from "./types.js";
@@ -99,10 +86,7 @@ const authFields = {
   timeout: { type: "number" as const, description: "Operation timeout in milliseconds (default: 30000)", default: 30000 },
 };
 
-const k8sConfigFields = {
-  kubectlPath: { type: "string" as const, description: "Optional custom kubectl path on the remote host" },
-  kubeconfig: { type: "string" as const, description: "Optional custom kubeconfig path on the remote host" },
-};
+
 
 // --- Server ---
 
@@ -247,31 +231,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           name: { type: "string", description: "Optional label for the session" },
           ...authFields,
-          ...k8sConfigFields,
         },
         required: ["host"],
-      },
-    },
-    {
-      name: "k8s_connect",
-      description: "Register a local Kubernetes session on the MCP server host. Supports either kubeconfig input or direct API server credentials that will be converted into a temporary kubeconfig.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Optional label for the session" },
-          kubeconfig: { type: "string", description: "Kubeconfig YAML content or local file path" },
-          server: { type: "string", description: "Kubernetes API server URL, for example https://10.0.0.1:6443" },
-          namespace: { type: "string", description: "Default namespace for the generated kubeconfig context" },
-          insecureSkipTlsVerify: { type: "boolean", description: "Skip API server TLS verification when generating kubeconfig" },
-          serverName: { type: "string", description: "Optional TLS server name override for API server certificate verification" },
-          certificateAuthority: { type: "string", description: "CA certificate local file path or PEM content" },
-          certificateAuthorityData: { type: "string", description: "CA certificate PEM content or base64-encoded PEM" },
-          clientCertificate: { type: "string", description: "Client certificate local file path or PEM content" },
-          clientCertificateData: { type: "string", description: "Client certificate PEM content or base64-encoded PEM" },
-          clientKey: { type: "string", description: "Client private key local file path or PEM content" },
-          clientKeyData: { type: "string", description: "Client private key PEM content or base64-encoded PEM" },
-          token: { type: "string", description: "Bearer token for API server authentication" },
-        },
       },
     },
     {
@@ -522,94 +483,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {} },
     },
 
-    // ======== Kubernetes ========
-    {
-      name: "ssh_k8s_list_pods",
-      description: "List Kubernetes pods in all namespaces or a specific namespace.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID" },
-          ...authFields,
-          ...k8sConfigFields,
-          namespace: { type: "string", description: "Optional specific namespace (lists all namespaces if omitted)" }
-        }
-      }
-    },
-    {
-      name: "ssh_k8s_pod_logs",
-      description: "Fetch logs from a Kubernetes pod container.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID" },
-          ...authFields,
-          ...k8sConfigFields,
-          namespace: { type: "string", description: "Kubernetes namespace" },
-          pod: { type: "string", description: "Pod name" },
-          container: { type: "string", description: "Optional container name (defaults to first container)" },
-          tail: { type: "number", description: "Lines of tail log to fetch (default: 100)", default: 100 }
-        },
-        required: ["namespace", "pod"]
-      }
-    },
-    {
-      name: "ssh_k8s_pod_exec",
-      description: "Execute a command inside a Kubernetes pod container.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID" },
-          ...authFields,
-          ...k8sConfigFields,
-          namespace: { type: "string", description: "Kubernetes namespace" },
-          pod: { type: "string", description: "Pod name" },
-          container: { type: "string", description: "Optional container name" },
-          command: { type: "string", description: "Command to execute inside the container" }
-        },
-        required: ["namespace", "pod", "command"]
-      }
-    },
-    {
-      name: "ssh_k8s_pod_cp",
-      description: "Copy files/directories between host and Kubernetes pod container.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID" },
-          ...authFields,
-          ...k8sConfigFields,
-          namespace: { type: "string", description: "Kubernetes namespace" },
-          pod: { type: "string", description: "Pod name" },
-          container: { type: "string", description: "Optional container name" },
-          direction: { type: "string", description: "Direction: 'to_pod' or 'from_pod'", enum: ["to_pod", "from_pod"] },
-          hostPath: { type: "string", description: "Path on the jump host" },
-          podPath: { type: "string", description: "Path on the pod container" }
-        },
-        required: ["namespace", "pod", "direction", "hostPath", "podPath"]
-      }
-    },
-    {
-      name: "ssh_k8s_arthas_attach",
-      description: "Attach Arthas to a Java process on the host or inside a pod, and execute a command. Supports offline mode using local assets if available.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID" },
-          ...authFields,
-          ...k8sConfigFields,
-          namespace: { type: "string", description: "Kubernetes namespace (omit if running on host)" },
-          pod: { type: "string", description: "Pod name (omit if running on host)" },
-          container: { type: "string", description: "Optional container name" },
-          pid: { type: "number", description: "Optional target Java PID (auto-detected if omitted)" },
-          command: { type: "string", description: "Arthas command to run (e.g. 'thread -n 3', 'dashboard -n 1')" },
-          arthasVersion: { type: "string", description: "Specific Arthas version to use (must exist in local assets)" },
-          jdkVersion: { type: "string", description: "Specific JDK version to use for attach (e.g. '8', '11'; must exist in local assets)" },
-          timeout: { type: "number", description: "Command timeout in ms (default: 300000)" },
-        },
-        required: ["command"]
-      }
-    },
+
   ],
 }));
 
@@ -639,21 +513,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case "k8s_connect": {
-        if (!validateK8sConnectArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "Provide either kubeconfig, or server plus token, or server plus clientCertificate/clientKey");
-        }
-        const session = await createK8sSession(args);
-        return {
-          content: [{
-            type: "text",
-            text: [
-              `K8s Session created: ${session.id}`,
-              `  Label: ${session.label}`,
-            ].join("\n"),
-          }],
-        };
-      }
+
 
       case "ssh_disconnect": {
         if (!validateSshDisconnectArgs(args)) {
@@ -762,40 +622,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleDiskUsage(args);
       }
 
-      case "ssh_k8s_list_pods": {
-        if (!validateSshK8sListPodsArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "Invalid parameters");
-        }
-        return await handleK8sListPods(args);
-      }
 
-      case "ssh_k8s_pod_logs": {
-        if (!validateSshK8sPodLogsArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "namespace and pod are required");
-        }
-        return await handleK8sPodLogs(args);
-      }
-
-      case "ssh_k8s_pod_exec": {
-        if (!validateSshK8sPodExecArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "namespace, pod and command are required");
-        }
-        return await handleK8sPodExec(args);
-      }
-
-      case "ssh_k8s_pod_cp": {
-        if (!validateSshK8sPodCpArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "namespace, pod, direction, hostPath, podPath are required");
-        }
-        return await handleK8sPodCp(args);
-      }
-
-      case "ssh_k8s_arthas_attach": {
-        if (!validateSshK8sArthasAttachArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "command is required");
-        }
-        return await handleK8sArthasAttach(args);
-      }
 
       // Interactive Shell
       case "ssh_shell": {

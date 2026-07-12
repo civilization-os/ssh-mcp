@@ -18,12 +18,6 @@ import {
   validateSshShellReadArgs,
   validateSshShellResizeArgs,
   validateSshShellCloseArgs,
-  validateK8sConnectArgs,
-  validateSshK8sListPodsArgs,
-  validateSshK8sPodLogsArgs,
-  validateSshK8sPodExecArgs,
-  validateSshK8sPodCpArgs,
-  validateSshK8sArthasAttachArgs,
   extractCredentials,
   extractSessionId,
 } from "./types.js";
@@ -235,120 +229,7 @@ describe("validateSshShellCloseArgs", () => {
   });
 });
 
-// ======== K8s validators ========
 
-describe("validateK8sConnectArgs", () => {
-  it("accepts kubeconfig string", () => {
-    expect(validateK8sConnectArgs({ kubeconfig: "/path/to/kubeconfig" })).toBe(true);
-  });
-
-  it("accepts server + token", () => {
-    expect(validateK8sConnectArgs({ server: "https://10.0.0.1:6443", token: "my-token" })).toBe(true);
-  });
-
-  it("accepts server + client cert + key", () => {
-    expect(validateK8sConnectArgs({
-      server: "https://10.0.0.1:6443",
-      clientCertificate: "/path/to/cert",
-      clientKey: "/path/to/key",
-    })).toBe(true);
-  });
-
-  it("accepts server + cert data + key data", () => {
-    expect(validateK8sConnectArgs({
-      server: "https://10.0.0.1:6443",
-      clientCertificateData: "base64cert",
-      clientKeyData: "base64key",
-    })).toBe(true);
-  });
-
-  it("rejects server without credentials", () => {
-    expect(validateK8sConnectArgs({ server: "https://10.0.0.1:6443" })).toBe(false);
-  });
-
-  it("rejects empty object", () => {
-    expect(validateK8sConnectArgs({})).toBe(false);
-  });
-
-  it("rejects null", () => {
-    expect(validateK8sConnectArgs(null)).toBe(false);
-  });
-});
-
-describe("validateSshK8sPodLogsArgs", () => {
-  it("accepts pod + namespace", () => {
-    expect(validateSshK8sPodLogsArgs({ pod: "my-pod", namespace: "default" })).toBe(true);
-  });
-
-  it("rejects missing pod", () => {
-    expect(validateSshK8sPodLogsArgs({ namespace: "default" })).toBe(false);
-  });
-});
-
-describe("validateSshK8sPodExecArgs", () => {
-  it("accepts pod + namespace + command", () => {
-    expect(validateSshK8sPodExecArgs({ pod: "p", namespace: "ns", command: "cat /etc/hosts" })).toBe(true);
-  });
-
-  it("rejects missing command", () => {
-    expect(validateSshK8sPodExecArgs({ pod: "p", namespace: "ns" })).toBe(false);
-  });
-});
-
-describe("validateSshK8sPodCpArgs", () => {
-  it("accepts valid to_pod args", () => {
-    expect(validateSshK8sPodCpArgs({
-      pod: "p", namespace: "ns", direction: "to_pod", hostPath: "/local", podPath: "/pod",
-    })).toBe(true);
-  });
-
-  it("accepts valid from_pod args", () => {
-    expect(validateSshK8sPodCpArgs({
-      pod: "p", namespace: "ns", direction: "from_pod", hostPath: "/local", podPath: "/pod",
-    })).toBe(true);
-  });
-
-  it("rejects invalid direction", () => {
-    expect(validateSshK8sPodCpArgs({
-      pod: "p", namespace: "ns", direction: "sideways", hostPath: "/local", podPath: "/pod",
-    })).toBe(false);
-  });
-
-  it("rejects missing hostPath", () => {
-    expect(validateSshK8sPodCpArgs({
-      pod: "p", namespace: "ns", direction: "to_pod", podPath: "/pod",
-    })).toBe(false);
-  });
-});
-
-describe("validateSshK8sListPodsArgs", () => {
-  it("accepts any object", () => {
-    expect(validateSshK8sListPodsArgs({})).toBe(true);
-  });
-
-  it("accepts namespace filter", () => {
-    expect(validateSshK8sListPodsArgs({ namespace: "kube-system" })).toBe(true);
-  });
-});
-
-describe("validateSshK8sArthasAttachArgs", () => {
-  it("accepts command only", () => {
-    expect(validateSshK8sArthasAttachArgs({ command: "thread -n 3" })).toBe(true);
-  });
-
-  it("accepts full args", () => {
-    expect(validateSshK8sArthasAttachArgs({
-      command: "dashboard -n 1",
-      pod: "my-pod",
-      namespace: "default",
-      pid: 1234,
-    })).toBe(true);
-  });
-
-  it("rejects missing command", () => {
-    expect(validateSshK8sArthasAttachArgs({})).toBe(false);
-  });
-});
 
 // ======== extract helpers ========
 

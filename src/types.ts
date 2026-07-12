@@ -10,16 +10,13 @@ export interface SshCredentials {
   privateKey?: string;
   passphrase?: string;
   timeout?: number;
-  // K8s specific config for the jump host
-  kubectlPath?: string;
-  kubeconfig?: string; // Path on the remote host
 }
 
 // --- Session ---
 
 export interface Session {
   id: string;
-  type: 'ssh' | 'k8s';
+  type: 'ssh';
   client?: Client;
   label: string;
   host: string;
@@ -27,32 +24,12 @@ export interface Session {
   username: string;
   createdAt: number;
   lastUsedAt: number;
-  // K8s specific config
-  kubectlPath?: string;
-  kubeconfig?: string;
-  kubeconfigPath?: string;
 }
 
 // --- Tool argument types ---
 
 export interface SshConnectArgs extends SshCredentials {
   name?: string;
-}
-
-export interface K8sConnectArgs {
-  name?: string;
-  kubeconfig?: string; // YAML content or local path
-  server?: string; // Kubernetes API server URL
-  namespace?: string;
-  insecureSkipTlsVerify?: boolean;
-  serverName?: string;
-  certificateAuthority?: string; // Local file path or PEM content
-  certificateAuthorityData?: string; // PEM content or base64-encoded PEM
-  clientCertificate?: string; // Local file path or PEM content
-  clientCertificateData?: string; // PEM content or base64-encoded PEM
-  clientKey?: string; // Local file path or PEM content
-  clientKeyData?: string; // PEM content or base64-encoded PEM
-  token?: string;
 }
 
 export interface SshDisconnectArgs {
@@ -251,8 +228,6 @@ export function extractCredentials(args: Record<string, unknown>): Partial<SshCr
     privateKey: str(args.privateKey),
     passphrase: str(args.passphrase),
     timeout: num(args.timeout),
-    kubectlPath: str(args.kubectlPath),
-    kubeconfig: str(args.kubeconfig),
   };
 }
 
@@ -340,52 +315,4 @@ export function validateSshShellCloseArgs(args: unknown): args is SshShellCloseA
   return isRecord(args) && typeof args.shellId === "string";
 }
 
-// ======== Kubernetes Validators ========
 
-export interface SshK8sArthasAttachArgs {
-  sessionId?: string;
-  command: string;
-  namespace?: string;
-  pod?: string;
-  container?: string;
-  pid?: number;
-  arthasVersion?: string;
-  jdkVersion?: string;
-  timeout?: number;
-}
-
-export function validateSshK8sArthasAttachArgs(args: unknown): args is SshK8sArthasAttachArgs {
-  return isRecord(args) && typeof args.command === "string";
-}
-
-export function validateK8sConnectArgs(args: unknown): args is K8sConnectArgs {
-  if (!isRecord(args)) return false;
-  if (typeof args.kubeconfig === "string") return true;
-  if (typeof args.server !== "string") return false;
-  if (typeof args.token === "string") return true;
-
-  const hasClientCert = typeof args.clientCertificate === "string" || typeof args.clientCertificateData === "string";
-  const hasClientKey = typeof args.clientKey === "string" || typeof args.clientKeyData === "string";
-  return hasClientCert && hasClientKey;
-}
-
-export function validateSshK8sPodLogsArgs(args: unknown): boolean {
-  return isRecord(args) && typeof args.pod === "string" && typeof args.namespace === "string";
-}
-
-export function validateSshK8sPodExecArgs(args: unknown): boolean {
-  return isRecord(args) && typeof args.pod === "string" && typeof args.namespace === "string" && typeof args.command === "string";
-}
-
-export function validateSshK8sPodCpArgs(args: unknown): boolean {
-  return isRecord(args) && 
-         typeof args.pod === "string" && 
-         typeof args.namespace === "string" && 
-         typeof args.hostPath === "string" && 
-         typeof args.podPath === "string" && 
-         (args.direction === "to_pod" || args.direction === "from_pod");
-}
-
-export function validateSshK8sListPodsArgs(args: unknown): boolean {
-  return isRecord(args);
-}

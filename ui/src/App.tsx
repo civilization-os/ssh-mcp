@@ -13,11 +13,10 @@ interface SshSession {
   createdAt?: number;
   lastUsedAt?: number;
   idleTimeoutMs?: number;
-  kubectlPath?: string;
-  kubeconfig?: string;
   authType?: "password" | "privateKey";
   hasPassword?: boolean;
   hasPrivateKey?: boolean;
+  connected?: boolean;
 }
 
 interface ShellSession {
@@ -42,14 +41,7 @@ const WS_BASE =
     ? "ws://127.0.0.1:12222"
     : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
 
-const sessionBadgeStyle: React.CSSProperties = {
-  fontSize: "10px",
-  padding: "1px 6px",
-  borderRadius: "4px",
-  background: "rgba(255, 255, 255, 0.05)",
-  border: "1px solid rgba(255, 255, 255, 0.1)",
-  color: "var(--text-secondary)"
-};
+
 
 function SessionItem({ 
   sess, 
@@ -69,60 +61,60 @@ function SessionItem({
   return (
     <div
       onClick={onSelect}
+      className="shadcn-card"
       style={{
         padding: "12px",
-        borderRadius: "8px",
         marginBottom: "8px",
         cursor: "pointer",
-        background: isSelected ? "rgba(255, 255, 255, 0.08)" : "rgba(255, 255, 255, 0.02)",
-        border: `1px solid ${isSelected ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.05)"}`,
-        transition: "all 0.2s ease"
+        backgroundColor: isSelected ? "hsl(var(--accent))" : "transparent",
+        borderColor: isSelected ? "hsl(var(--ring))" : "hsl(var(--border))",
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>
-        <span style={{ fontWeight: 600, fontSize: "14px", color: isSelected ? "var(--text-primary)" : "var(--text-secondary)" }}>
+        <span style={{ fontWeight: 600, fontSize: "14px", color: isSelected ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>
           {sess.label}
         </span>
-        <div style={{ display: "flex", gap: "8px" }}>
+        <div style={{ display: "flex", gap: "4px" }}>
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
-            style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: "12px" }}
+            className="shadcn-btn shadcn-btn-ghost"
+            style={{ padding: "4px", height: "auto", minHeight: 0, fontSize: "12px" }}
           >
             ✎
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: "12px" }}
+            className="shadcn-btn shadcn-btn-ghost"
+            style={{ padding: "4px", height: "auto", minHeight: 0, fontSize: "12px" }}
           >
             ✕
           </button>
         </div>
       </div>
-      <div style={{ fontSize: "11px", color: "var(--text-secondary)", opacity: 0.7 }}>
+      <div style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))" }}>
         {sess.username}@{sess.host}
       </div>
       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
-        <span style={sessionBadgeStyle}>{sess.authType === "privateKey" ? translations[lang].authPrivateKeySaved : translations[lang].authPasswordSaved}</span>
-        {sess.kubectlPath && <span style={sessionBadgeStyle}>kubectl</span>}
-        {sess.kubeconfig && <span style={sessionBadgeStyle}>kubeconfig</span>}
+        <span className="shadcn-badge">{sess.authType === "privateKey" ? translations[lang].authPrivateKeySaved : translations[lang].authPasswordSaved}</span>
       </div>
       <div style={{ 
         fontSize: "10px", 
         marginTop: "8px", 
-        color: "var(--accent-neon)",
-        opacity: 0.8,
+        color: "hsl(var(--foreground))",
         display: "flex",
         alignItems: "center",
         gap: "6px"
-      }} title={translations[lang].heartbeatTooltip}>
-        <span className="pulse-glow" style={{ 
+      }} title={sess.connected ? translations[lang].heartbeatTooltip : (lang === "zh" ? "连接已断开，需要重新编辑输入密码/密钥重新连接" : "Connection disconnected, needs credentials to reconnect")}>
+        <span className={sess.connected ? "pulse-glow" : ""} style={{ 
           width: "6px", 
           height: "6px", 
           borderRadius: "50%", 
-          background: "var(--accent-neon)",
+          background: sess.connected ? "#22c55e" : "hsl(var(--destructive))",
           display: "inline-block"
         }} />
-        <span style={{ fontWeight: 500 }}>{translations[lang].heartbeatActive}</span>
+        <span style={{ fontWeight: 500, color: sess.connected ? "hsl(var(--foreground))" : "hsl(var(--destructive))" }}>
+          {sess.connected ? translations[lang].heartbeatActive : (lang === "zh" ? "已断开" : "Disconnected")}
+        </span>
       </div>
     </div>
   );
@@ -137,7 +129,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<"terminal" | "sftp" | "k8s" | "monitor">("terminal");
+  const [activeTab, setActiveTab] = useState<"terminal" | "sftp" | "monitor">("terminal");
   
   // Modal & Form States
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -150,8 +142,6 @@ export default function App() {
   const [authMethodInput, setAuthMethodInput] = useState<"password" | "privateKey">("password");
   const [passwordInput, setPasswordInput] = useState("");
   const [privateKeyInput, setPrivateKeyInput] = useState("");
-  const [kubectlPathInput, setKubectlPathInput] = useState("");
-  const [kubeconfigInput, setKubeconfigInput] = useState("");
   const [connectLoading, setConnectLoading] = useState(false);
   const [connectError, setConnectError] = useState("");
 
@@ -176,8 +166,6 @@ export default function App() {
     setAuthMethodInput("password");
     setPasswordInput("");
     setPrivateKeyInput("");
-    setKubectlPathInput("");
-    setKubeconfigInput("");
     setConnectError("");
   };
 
@@ -196,8 +184,6 @@ export default function App() {
     setAuthMethodInput(session.authType === "privateKey" ? "privateKey" : "password");
     setPasswordInput("");
     setPrivateKeyInput("");
-    setKubectlPathInput(session.kubectlPath ?? "");
-    setKubeconfigInput(session.kubeconfig ?? "");
     setConnectError("");
     setShowCreateModal(true);
   };
@@ -259,8 +245,6 @@ export default function App() {
         host: hostInput,
         port: parseInt(portInput, 10) || 22,
         username: usernameInput,
-        kubectlPath: kubectlPathInput,
-        kubeconfig: kubeconfigInput,
       };
       if (authMethodInput === "password") {
         if (!isEditing || authMethodInput !== initialAuthMethod || passwordInput) {
@@ -337,18 +321,17 @@ export default function App() {
   const filteredShells = shells.filter(s => s.sessionId === selectedSessionId);
 
   return (
-    <div style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden", background: "var(--bg-gradient)" }}>
+    <div style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden", backgroundColor: "hsl(var(--background))" }}>
       {/* Sidebar */}
       <div 
-        className="glass-panel" 
         style={{ 
           width: sidebarCollapsed ? "68px" : "300px", 
           minWidth: sidebarCollapsed ? "68px" : "300px", 
-          borderRight: "1px solid var(--panel-border)", 
+          borderRight: "1px solid hsl(var(--border))", 
+          backgroundColor: "hsl(var(--card))",
           display: "flex", 
           flexDirection: "column", 
           height: "100%", 
-          borderRadius: "0",
           overflow: "hidden",
           transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
         }}
@@ -357,7 +340,7 @@ export default function App() {
         {/* Title Bar / Collapse Button */}
         <div style={{ 
           padding: sidebarCollapsed ? "18px 0" : "24px 20px", 
-          borderBottom: "1px solid var(--panel-border)", 
+          borderBottom: "1px solid hsl(var(--border))", 
           display: "flex", 
           alignItems: "center", 
           justifyContent: "center",
@@ -380,10 +363,10 @@ export default function App() {
             overflow: "hidden",
             whiteSpace: "nowrap"
           }}>
-            <h1 className="gradient-text" style={{ fontSize: "20px", margin: 0, fontWeight: 700, letterSpacing: "-0.5px" }}>
+            <h1 style={{ fontSize: "16px", margin: 0, fontWeight: 700, letterSpacing: "-0.02em", color: "hsl(var(--foreground))" }}>
               {t("title")}
             </h1>
-            <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
+            <p style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))", marginTop: "4px" }}>
               {t("subtitle")}
             </p>
           </div>
@@ -400,14 +383,10 @@ export default function App() {
             {!sidebarCollapsed && (
               <button
                 onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+                className="shadcn-btn shadcn-btn-outline"
                 style={{
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid var(--panel-border)",
-                  color: "var(--text-primary)",
-                  borderRadius: "6px",
                   padding: "4px 8px",
                   fontSize: "11px",
-                  cursor: "pointer"
                 }}
               >
                 {t("langToggle")}
@@ -415,18 +394,12 @@ export default function App() {
             )}
             <button
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="shadcn-btn shadcn-btn-ghost"
               style={{
-                background: "rgba(255,255,255,0.05)",
-                border: "1px solid var(--panel-border)",
-                color: "var(--text-primary)",
-                borderRadius: "6px",
                 width: "36px",
                 height: "36px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                fontSize: "14px"
+                padding: 0,
+                fontSize: "12px"
               }}
               title={sidebarCollapsed ? (lang === "zh" ? "展开菜单" : "Expand Menu") : (lang === "zh" ? "收起菜单" : "Collapse Menu")}
             >
@@ -438,21 +411,20 @@ export default function App() {
         {/* Tab Selection - Upgraded */}
         {selectedSessionId && (
           <div style={{ 
-            padding: "10px 0", 
-            borderBottom: "1px solid var(--panel-border)", 
+            padding: "8px 0", 
+            borderBottom: "1px solid hsl(var(--border))", 
             display: "flex", 
             flexDirection: "column", 
-            gap: "4px",
+            gap: "2px",
             alignItems: "center",
             width: "100%",
             position: "relative",
             flexShrink: 0
           }}>
             {[
-              { id: "terminal", icon: "💻", label: t("tabTerminal"), color: "#00f2fe", glow: "rgba(0,242,254,0.2)" },
-              { id: "sftp",     icon: "📂", label: t("tabSftp"),     color: "#f7971e", glow: "rgba(247,151,30,0.2)"  },
-              { id: "k8s",     icon: "☸️", label: t("tabK8s"),     color: "#a855f7", glow: "rgba(168,85,247,0.2)" },
-              { id: "monitor", icon: "📊", label: t("tabMonitor"), color: "#10b981", glow: "rgba(16,185,129,0.2)" }
+              { id: "terminal", icon: "💻", label: t("tabTerminal") },
+              { id: "sftp",     icon: "📂", label: t("tabSftp") },
+              { id: "monitor",  icon: "📊", label: t("tabMonitor") }
             ].map(tab => {
               const isActive = activeTab === tab.id;
               return (
@@ -460,69 +432,53 @@ export default function App() {
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
                   title={sidebarCollapsed ? tab.label : undefined}
+                  className="shadcn-btn"
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    padding: "10px 12px",
+                    padding: "8px 12px",
                     width: sidebarCollapsed ? "40px" : "260px",
-                    height: "40px",
-                    borderRadius: "8px",
+                    height: "36px",
+                    borderRadius: "0px",
                     cursor: "pointer",
-                    fontSize: "14px",
-                    fontWeight: isActive ? 700 : 500,
+                    fontSize: "13px",
+                    fontWeight: isActive ? 600 : 500,
                     position: "relative",
-                    background: isActive
-                      ? `linear-gradient(135deg, ${tab.glow}, rgba(255,255,255,0.03))`
-                      : "transparent",
-                    color: isActive ? tab.color : "var(--text-secondary)",
-                    border: isActive ? `1px solid ${tab.color}33` : "1px solid transparent",
-                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                    boxShadow: isActive ? `0 2px 12px ${tab.glow}` : "none",
+                    backgroundColor: "transparent",
+                    color: isActive ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
+                    border: "none",
+                    borderBottom: isActive ? "2px solid hsl(var(--primary))" : "none",
+                    justifyContent: "flex-start",
                     overflow: "hidden",
                     whiteSpace: "nowrap"
                   }}
                   onMouseEnter={e => {
                     if (!isActive) {
-                      (e.currentTarget as HTMLDivElement).style.background = "rgba(255,255,255,0.04)";
-                      (e.currentTarget as HTMLDivElement).style.color = "var(--text-primary)";
+                      e.currentTarget.style.backgroundColor = "hsl(var(--accent) / 0.5)";
+                      e.currentTarget.style.color = "hsl(var(--foreground))";
                     }
                   }}
                   onMouseLeave={e => {
                     if (!isActive) {
-                      (e.currentTarget as HTMLDivElement).style.background = "transparent";
-                      (e.currentTarget as HTMLDivElement).style.color = "var(--text-secondary)";
+                      e.currentTarget.style.backgroundColor = "transparent";
+                      e.currentTarget.style.color = "hsl(var(--muted-foreground))";
                     }
                   }}
                 >
-                  {/* Active indicator bar */}
-                  {isActive && (
-                    <div style={{
-                      position: "absolute",
-                      left: 0,
-                      top: "20%",
-                      height: "60%",
-                      width: "3px",
-                      borderRadius: "0 3px 3px 0",
-                      background: tab.color,
-                      boxShadow: `0 0 8px ${tab.color}`,
-                    }} />
-                  )}
                   <div style={{ 
                     display: "flex", 
                     alignItems: "center", 
                     justifyContent: "center",
                     width: "16px",
                     flexShrink: 0,
-                    marginLeft: (!sidebarCollapsed && isActive) ? "4px" : "0",
-                    transition: "margin 0.3s"
                   }}>
-                    <span style={{ fontSize: "16px" }}>{tab.icon}</span>
+                    <span style={{ fontSize: "14px" }}>{tab.icon}</span>
                   </div>
                   
                   {/* Text Label */}
                   <span style={{ 
                     position: "absolute",
-                    left: "44px",
+                    left: "38px",
                     opacity: sidebarCollapsed ? 0 : 1,
                     transition: "opacity 0.2s ease",
                     pointerEvents: sidebarCollapsed ? "none" : "auto",
@@ -547,21 +503,17 @@ export default function App() {
         }}>
           <div style={{ width: "300px", padding: "16px 12px", height: "100%", overflowY: "auto", boxSizing: "border-box" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", paddingLeft: "8px" }}>
-            <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "var(--text-secondary)", letterSpacing: "1px" }}>
+            <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "hsl(var(--muted-foreground))", letterSpacing: "1.5px" }}>
               {t("sessionsTitle")} ({sessions.length})
             </div>
             <button
               onClick={openCreateModal}
+              className="shadcn-btn shadcn-btn-outline"
               style={{
-                background: "rgba(0, 242, 254, 0.1)",
-                border: "1px solid rgba(0, 242, 254, 0.3)",
-                color: "var(--accent-blue)",
-                borderRadius: "4px",
-                padding: "2px 6px",
-                fontSize: "11px",
-                cursor: "pointer",
-                fontWeight: 600,
-                transition: "all 0.2s ease"
+                width: "24px",
+                height: "24px",
+                padding: 0,
+                fontSize: "12px",
               }}
               title={t("connectNewSession")}
             >
@@ -592,8 +544,6 @@ export default function App() {
                   setHostInput(sess.host);
                   setPortInput(String(sess.port));
                   setUsernameInput(sess.username);
-                  setKubectlPathInput(sess.kubectlPath || "");
-                  setKubeconfigInput(sess.kubeconfig || "");
                   setInitialAuthMethod(sess.authType || "password");
                   setAuthMethodInput(sess.authType || "password");
                   setShowCreateModal(true);
@@ -607,17 +557,15 @@ export default function App() {
           {selectedSessionId && activeTab === "terminal" && (
             <div style={{ marginTop: "24px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", paddingLeft: "8px" }}>
-                <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "var(--text-secondary)", letterSpacing: "1px" }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "hsl(var(--muted-foreground))", letterSpacing: "1px" }}>
                   {t("terminalsTitle")}
                 </div>
                 <button
-                  className="glow-btn"
+                  className="shadcn-btn shadcn-btn-outline"
                   onClick={handleOpenShell}
                   style={{
                     padding: "4px 8px",
-                    borderRadius: "4px",
                     fontSize: "11px",
-                    color: "#000"
                   }}
                 >
                   {t("newBtn")}
@@ -625,7 +573,7 @@ export default function App() {
               </div>
 
               {filteredShells.length === 0 ? (
-                <div style={{ padding: "12px 8px", fontSize: "12px", color: "var(--text-secondary)", textAlign: "center" }}>
+                <div style={{ padding: "12px 8px", fontSize: "12px", color: "hsl(var(--muted-foreground))", textAlign: "center" }}>
                   {t("noTerminals")}
                 </div>
               ) : (
@@ -633,22 +581,21 @@ export default function App() {
                   <div
                     key={sh.id}
                     onClick={() => setActiveShellId(sh.id)}
+                    className="shadcn-card"
                     style={{
                       padding: "10px 12px",
-                      borderRadius: "8px",
                       marginBottom: "6px",
                       cursor: "pointer",
-                      background: activeShellId === sh.id ? "rgba(255, 255, 255, 0.08)" : "rgba(255, 255, 255, 0.02)",
-                      border: `1px solid ${activeShellId === sh.id ? "rgba(255, 255, 255, 0.2)" : "rgba(255, 255, 255, 0.02)"}`,
+                      backgroundColor: activeShellId === sh.id ? "hsl(var(--accent))" : "transparent",
+                      borderColor: activeShellId === sh.id ? "hsl(var(--ring))" : "hsl(var(--border))",
                       display: "flex",
                       justifyContent: "space-between",
-                      alignItems: "center",
-                      transition: "all 0.2s ease"
+                      alignItems: "center"
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: sh.closed ? "var(--accent-pink)" : "var(--accent-neon)" }} />
-                      <span style={{ fontSize: "13px", color: activeShellId === sh.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                      <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: sh.closed ? "hsl(var(--destructive))" : "#22c55e" }} />
+                      <span style={{ fontSize: "13px", color: activeShellId === sh.id ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>
                         {sh.id.substring(3, 11)}...
                       </span>
                     </div>
@@ -656,28 +603,21 @@ export default function App() {
                       {sh.keepAlive && (
                         <span 
                           title={lang === "zh" ? "已开启心跳维持" : "Keep-alive enabled"}
-                          style={{ fontSize: "10px", color: "var(--accent-neon)", opacity: 0.8 }}
+                          style={{ fontSize: "10px", color: "#22c55e", opacity: 0.8 }}
                         >
                           💓
                         </span>
                       )}
-                      <span style={{ fontSize: "10px", color: "var(--text-secondary)" }}>{sh.age}s</span>
+                      <span style={{ fontSize: "10px", color: "hsl(var(--muted-foreground))" }}>{sh.age}s</span>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleCloseShell(sh.id); }}
                         title="关闭此终端"
+                        className="shadcn-btn shadcn-btn-ghost"
                         style={{
-                          background: "transparent",
-                          border: "none",
-                          color: "var(--text-secondary)",
-                          cursor: "pointer",
+                          padding: "2px 4px",
                           fontSize: "12px",
                           lineHeight: 1,
-                          padding: "2px 4px",
-                          borderRadius: "4px",
-                          transition: "color 0.2s ease"
                         }}
-                        onMouseEnter={(e) => (e.currentTarget.style.color = "var(--accent-pink)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
                       >
                         ✕
                       </button>
@@ -695,18 +635,18 @@ export default function App() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {!selectedSessionId ? (
           <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center" }}>
-            <div className="glass-panel" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
+            <div className="shadcn-card" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
               <div style={{ fontSize: "48px", marginBottom: "16px" }}>📡</div>
-              <h2 style={{ color: "var(--text-primary)", fontWeight: 600, fontSize: "20px", marginBottom: "8px" }}>
+              <h2 style={{ color: "hsl(var(--foreground))", fontWeight: 600, fontSize: "18px", marginBottom: "8px" }}>
                 {t("emptyStateTitle")}
               </h2>
-              <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: "1.5", marginBottom: "24px" }}>
+              <p style={{ color: "hsl(var(--muted-foreground))", fontSize: "13px", lineHeight: "1.5", marginBottom: "24px" }}>
                 {t("emptyStateDesc")}
               </p>
               <button
-                className="glow-btn"
+                className="shadcn-btn shadcn-btn-primary"
                 onClick={openCreateModal}
-                style={{ padding: "10px 24px", borderRadius: "6px", color: "#000" }}
+                style={{ padding: "10px 24px" }}
               >
                 {t("connectNewSession")}
               </button>
@@ -724,15 +664,15 @@ export default function App() {
                 <XtermView shellId={activeShellId} key={activeShellId} lang={lang} />
               ) : (
                 <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center" }}>
-                  <div className="glass-panel" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
+                  <div className="shadcn-card" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
                     <div style={{ fontSize: "48px", marginBottom: "16px" }}>💻</div>
-                    <h2 style={{ color: "var(--text-primary)", fontWeight: 600, fontSize: "20px", marginBottom: "8px" }}>
+                    <h2 style={{ color: "hsl(var(--foreground))", fontWeight: 600, fontSize: "18px", marginBottom: "8px" }}>
                       {t("welcomeTitle")}
                     </h2>
-                    <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: "1.5" }}>
+                    <p style={{ color: "hsl(var(--muted-foreground))", fontSize: "13px", lineHeight: "1.5" }}>
                       {t("welcomeDesc")}
                     </p>
-                    <button className="glow-btn" onClick={handleOpenShell} style={{ marginTop: "20px", padding: "10px 24px", borderRadius: "6px" }}>
+                    <button className="shadcn-btn shadcn-btn-primary" onClick={handleOpenShell} style={{ marginTop: "20px", padding: "10px 24px" }}>
                       {t("newBtn")}
                     </button>
                   </div>
@@ -742,10 +682,6 @@ export default function App() {
 
             {activeTab === "sftp" && (
               <SftpView sessionId={selectedSessionId} lang={lang} />
-            )}
-
-            {activeTab === "k8s" && (
-              <K8sView sessionId={selectedSessionId} lang={lang} />
             )}
 
             {activeTab === "monitor" && (
@@ -763,102 +699,77 @@ export default function App() {
           left: 0,
           width: "100vw",
           height: "100vh",
-          background: "rgba(0,0,0,0.65)",
-          backdropFilter: "blur(10px)",
+          background: "rgba(0,0,0,0.75)",
+          backdropFilter: "blur(4px)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           zIndex: 1100,
         }}>
-          <div className="glass-panel" style={{
+          <div className="shadcn-card" style={{
             width: "420px",
-            padding: "32px 28px",
+            padding: "24px",
             display: "flex",
             flexDirection: "column",
-            gap: "20px",
-            border: "1px solid rgba(245, 87, 108, 0.3)",
-            boxShadow: "0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(245,87,108,0.08)",
+            gap: "16px",
           }}>
             {/* Icon + Title */}
-            <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
               <div style={{
-                width: "44px",
-                height: "44px",
+                width: "40px",
+                height: "40px",
                 borderRadius: "50%",
-                background: "rgba(245, 87, 108, 0.12)",
-                border: "1px solid rgba(245, 87, 108, 0.3)",
+                background: "hsl(var(--destructive) / 0.1)",
+                border: "1px solid hsl(var(--destructive) / 0.3)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "20px",
+                fontSize: "18px",
                 flexShrink: 0,
               }}>⚠️</div>
               <div>
-                <div style={{ fontSize: "17px", fontWeight: 700, color: "var(--text-primary)", marginBottom: "2px" }}>
+                <div style={{ fontSize: "16px", fontWeight: 600, color: "hsl(var(--foreground))" }}>
                   {t("confirmDeleteTitle")}
                 </div>
-                <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                <div style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>
                   {t("confirmDeleteHint")}
                 </div>
               </div>
             </div>
 
             {/* Session name highlight */}
-            <div style={{
-              background: "rgba(245, 87, 108, 0.08)",
-              border: "1px solid rgba(245, 87, 108, 0.2)",
-              borderRadius: "8px",
-              padding: "12px 16px",
+            <div className="shadcn-card" style={{
+              background: "hsl(var(--destructive) / 0.05)",
+              borderColor: "hsl(var(--destructive) / 0.2)",
+              padding: "10px 14px",
               display: "flex",
               alignItems: "center",
-              gap: "10px",
+              gap: "8px",
             }}>
               <span style={{ fontSize: "16px" }}>🖥️</span>
               <div>
-                <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--accent-pink)" }}>
+                <div style={{ fontSize: "13px", fontWeight: 600, color: "hsl(var(--foreground))" }}>
                   {confirmTarget.label}
                 </div>
-                <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                <div style={{ fontSize: "10px", color: "hsl(var(--muted-foreground))", marginTop: "2px" }}>
                   ID: {confirmTarget.id}
                 </div>
               </div>
             </div>
 
             {/* Buttons */}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
               <button
                 onClick={() => setConfirmTarget(null)}
-                style={{
-                  background: "transparent",
-                  border: "1px solid var(--panel-border)",
-                  color: "var(--text-secondary)",
-                  borderRadius: "6px",
-                  padding: "9px 20px",
-                  fontSize: "14px",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.3)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--panel-border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)"; }}
+                className="shadcn-btn shadcn-btn-outline"
+                style={{ padding: "8px 16px" }}
               >
                 {t("cancelBtn")}
               </button>
               <button
                 onClick={handleConfirmDelete}
-                style={{
-                  background: "linear-gradient(135deg, #f5576c, #c0392b)",
-                  border: "none",
-                  color: "#fff",
-                  borderRadius: "6px",
-                  padding: "9px 22px",
-                  fontSize: "14px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                  boxShadow: "0 4px 15px rgba(245,87,108,0.4)",
-                }}
-                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 6px 20px rgba(245,87,108,0.6)"; (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 4px 15px rgba(245,87,108,0.4)"; (e.currentTarget as HTMLButtonElement).style.transform = "none"; }}
+                className="shadcn-btn shadcn-btn-destructive"
+                style={{ padding: "8px 18px" }}
               >
                 {t("confirmDeleteBtn")}
               </button>
@@ -875,31 +786,29 @@ export default function App() {
           left: 0,
           width: "100vw",
           height: "100vh",
-          background: "rgba(0,0,0,0.6)",
-          backdropFilter: "blur(8px)",
+          background: "rgba(0,0,0,0.75)",
+          backdropFilter: "blur(4px)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           zIndex: 1000,
         }}>
-          <form onSubmit={handleConnect} className="glass-panel" style={{
+          <form onSubmit={handleConnect} className="shadcn-card" style={{
             width: "480px",
-            padding: "28px",
+            padding: "24px",
             display: "flex",
             flexDirection: "column",
             gap: "16px",
-            border: "1px solid rgba(255, 255, 255, 0.1)",
-            boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
           }}>
-            <h3 style={{ fontSize: "18px", fontWeight: 700, margin: 0, color: "var(--accent-blue)" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: 600, margin: 0, color: "hsl(var(--foreground))" }}>
               {editingSessionId ? t("editSession") : t("connectNewSession")}
             </h3>
 
             {connectError && (
               <div style={{
-                background: "rgba(245, 87, 108, 0.1)",
-                border: "1px solid rgba(245, 87, 108, 0.3)",
-                color: "var(--accent-pink)",
+                background: "hsl(var(--destructive) / 0.1)",
+                border: "1px solid hsl(var(--destructive) / 0.3)",
+                color: "hsl(var(--foreground))",
                 borderRadius: "6px",
                 padding: "10px 12px",
                 fontSize: "13px",
@@ -910,84 +819,56 @@ export default function App() {
             )}
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("sessionName")}</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Production Web Server"
+              <label style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>{t("sessionName")}</label>
+              <input
+                type="text"
+                placeholder="e.g. Production Web Server"
                 value={sessionNameInput}
                 onChange={e => setSessionNameInput(e.target.value)}
-                style={{
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--panel-border)",
-                  borderRadius: "6px",
-                  padding: "8px 12px",
-                  color: "var(--text-primary)",
-                  fontSize: "14px",
-                }}
+                className="shadcn-input"
               />
             </div>
 
             <div style={{ display: "flex", gap: "12px" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1 }}>
-                <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("host")} *</label>
+                <label style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>{t("host")} *</label>
                 <input
                   type="text"
                   required
                   placeholder="12.34.56.78"
                   value={hostInput}
                   onChange={e => setHostInput(e.target.value)}
-                  style={{
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid var(--panel-border)",
-                    borderRadius: "6px",
-                    padding: "8px 12px",
-                    color: "var(--text-primary)",
-                    fontSize: "14px",
-                  }}
+                  className="shadcn-input"
                 />
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "6px", width: "100px" }}>
-                <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("port")} *</label>
+                <label style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>{t("port")} *</label>
                 <input
                   type="text"
                   required
                   placeholder="22"
                   value={portInput}
                   onChange={e => setPortInput(e.target.value)}
-                  style={{
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid var(--panel-border)",
-                    borderRadius: "6px",
-                    padding: "8px 12px",
-                    color: "var(--text-primary)",
-                    fontSize: "14px",
-                  }}
+                  className="shadcn-input"
                 />
               </div>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("username")} *</label>
+              <label style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>{t("username")} *</label>
               <input
                 type="text"
                 required
                 placeholder="root"
                 value={usernameInput}
                 onChange={e => setUsernameInput(e.target.value)}
-                style={{
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--panel-border)",
-                  borderRadius: "6px",
-                  padding: "8px 12px",
-                  color: "var(--text-primary)",
-                  fontSize: "14px",
-                }}
+                className="shadcn-input"
               />
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("authMethod")}</label>
+              <label style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>{t("authMethod")}</label>
               <div style={{ display: "flex", gap: "12px" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", cursor: "pointer" }}>
                   <input
@@ -1010,116 +891,54 @@ export default function App() {
 
             {authMethodInput === "password" ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("password")} *</label>
+                <label style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>{t("password")} *</label>
                 <input
                   type="password"
                   required={!editingSessionId || authMethodInput !== initialAuthMethod}
                   placeholder="••••••••"
                   value={passwordInput}
                   onChange={e => setPasswordInput(e.target.value)}
-                  style={{
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid var(--panel-border)",
-                    borderRadius: "6px",
-                    padding: "8px 12px",
-                    color: "var(--text-primary)",
-                    fontSize: "14px",
-                  }}
+                  className="shadcn-input"
                 />
                 {editingSessionId && authMethodInput === initialAuthMethod && (
-                  <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("keepCurrentSecret")}</div>
+                  <div style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))" }}>{t("keepCurrentSecret")}</div>
                 )}
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("privateKey")} *</label>
+                <label style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>{t("privateKey")} *</label>
                 <textarea
                   required={!editingSessionId || authMethodInput !== initialAuthMethod}
                   rows={5}
                   placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                   value={privateKeyInput}
                   onChange={e => setPrivateKeyInput(e.target.value)}
+                  className="shadcn-input"
                   style={{
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid var(--panel-border)",
-                    borderRadius: "6px",
-                    padding: "8px 12px",
-                    color: "var(--text-primary)",
-                    fontSize: "12px",
                     fontFamily: "monospace",
                     resize: "none",
                   }}
                 />
                 {editingSessionId && authMethodInput === initialAuthMethod && (
-                  <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("keepCurrentSecret")}</div>
+                  <div style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))" }}>{t("keepCurrentSecret")}</div>
                 )}
               </div>
             )}
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("kubectlPath")} <span style={{ color: "var(--accent-blue)" }}>(Optional)</span></label>
-              <input
-                type="text"
-                placeholder={t("kubectlPathPlaceholder")}
-                value={kubectlPathInput}
-                onChange={e => setKubectlPathInput(e.target.value)}
-                style={{
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--panel-border)",
-                  borderRadius: "6px",
-                  padding: "8px 12px",
-                  color: "var(--text-primary)",
-                  fontSize: "14px",
-                }}
-              />
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("kubeconfigPath")} <span style={{ color: "var(--accent-blue)" }}>(Optional)</span></label>
-              <input
-                type="text"
-                placeholder={t("kubeconfigPathPlaceholder")}
-                value={kubeconfigInput}
-                onChange={e => setKubeconfigInput(e.target.value)}
-                style={{
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--panel-border)",
-                  borderRadius: "6px",
-                  padding: "8px 12px",
-                  color: "var(--text-primary)",
-                  fontSize: "14px",
-                }}
-              />
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "12px" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
               <button
                 type="button"
                 onClick={() => { setShowCreateModal(false); resetSessionForm(); }}
-                style={{
-                  background: "transparent",
-                  border: "1px solid var(--panel-border)",
-                  color: "var(--text-secondary)",
-                  borderRadius: "6px",
-                  padding: "8px 16px",
-                  fontSize: "14px",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
+                className="shadcn-btn shadcn-btn-outline"
+                style={{ padding: "8px 16px" }}
               >
                 {t("cancelBtn")}
               </button>
               <button
                 type="submit"
-                className="glow-btn"
+                className="shadcn-btn shadcn-btn-primary"
                 disabled={connectLoading}
-                style={{
-                  borderRadius: "6px",
-                  padding: "8px 24px",
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  color: "#000",
-                }}
+                style={{ padding: "8px 24px" }}
               >
                 {connectLoading ? t("connecting") : editingSessionId ? t("saveSession") : t("connectBtn")}
               </button>
@@ -1147,17 +966,14 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
   const authLabel = session.authType === "privateKey" ? t("authPrivateKeySaved") : t("authPasswordSaved");
 
   return (
-    <div className="glass-panel" style={{ 
+    <div className="shadcn-card" style={{ 
       margin: "12px 12px 0 12px", 
       padding: "10px 16px", 
-      borderRadius: "10px",
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: "20px",
-      background: "rgba(255, 255, 255, 0.02)",
-      border: "1px solid var(--panel-border)",
-      transition: "all 0.2s ease"
+      borderRadius: "6px",
     }}>
       {/* Session Title & Connection Info */}
       <div style={{ display: "flex", alignItems: "center", gap: "14px", flex: 1, minWidth: 0 }}>
@@ -1166,43 +982,33 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
           width: "8px", 
           height: "8px", 
           borderRadius: "50%", 
-          background: "var(--accent-neon)", 
-          boxShadow: "0 0 6px var(--accent-neon)",
+          background: session.connected ? "#22c55e" : "hsl(var(--destructive))", 
           flexShrink: 0
         }} />
         
         {/* Session Name */}
-        <span style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-primary)", flexShrink: 0 }}>
-          {session.label}
+        <span style={{ fontSize: "14px", fontWeight: 600, color: "hsl(var(--foreground))", flexShrink: 0 }}>
+          {session.label}{!session.connected && (lang === "zh" ? " (未连接)" : " (Disconnected)")}
         </span>
         
-        <div style={{ width: "1px", height: "16px", background: "rgba(255,255,255,0.1)", flexShrink: 0 }} />
+        <div style={{ width: "1px", height: "16px", background: "hsl(var(--border))", flexShrink: 0 }} />
 
         {/* Horizontal Info Items */}
         <div style={{ display: "flex", alignItems: "center", gap: "16px", flex: 1, minWidth: 0, overflowX: "auto" }}>
           <InlineInfoItem label={t("hostPort")} value={`${session.username}@${session.host}:${session.port}`} iconType="host" />
           <InlineInfoItem label={t("authStatus")} value={authLabel} iconType="auth" />
-          <InlineInfoItem label="kubectl" value={session.kubectlPath || t("autoDetect")} iconType="kubectl" />
-          <InlineInfoItem label="kubeconfig" value={session.kubeconfig || t("autoDetect")} iconType="kubeconfig" />
         </div>
       </div>
 
       {/* Edit button */}
       <button
         onClick={() => onEdit(session)}
+        className="shadcn-btn shadcn-btn-outline"
         style={{
-          background: "rgba(0, 242, 254, 0.05)",
-          border: "1px solid rgba(0, 242, 254, 0.2)",
-          color: "var(--accent-blue)",
-          borderRadius: "6px",
           padding: "6px 12px",
           fontSize: "12px",
-          cursor: "pointer",
-          flexShrink: 0,
-          transition: "all 0.2s"
+          height: "32px",
         }}
-        onMouseEnter={e => { e.currentTarget.style.background = "rgba(0, 242, 254, 0.12)"; e.currentTarget.style.borderColor = "rgba(0, 242, 254, 0.35)"; }}
-        onMouseLeave={e => { e.currentTarget.style.background = "rgba(0, 242, 254, 0.05)"; e.currentTarget.style.borderColor = "rgba(0, 242, 254, 0.2)"; }}
       >
         {t("editSession")}
       </button>
@@ -1210,17 +1016,13 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
   );
 }
 
-function InlineInfoItem({ label, value, iconType }: { label: string; value: string; iconType?: 'host' | 'auth' | 'kubectl' | 'kubeconfig' }) {
+function InlineInfoItem({ label, value, iconType }: { label: string; value: string; iconType?: 'host' | 'auth' }) {
   const getIcon = () => {
     switch (iconType) {
       case 'host':
-        return <span style={{ color: 'var(--accent-blue)', fontSize: '12px' }}>🖥️</span>;
+        return <span style={{ fontSize: '12px' }}>🖥️</span>;
       case 'auth':
-        return <span style={{ color: 'var(--accent-neon)', fontSize: '12px' }}>🛡️</span>;
-      case 'kubectl':
-        return <span style={{ color: '#a855f7', fontSize: '12px' }}>🧪</span>;
-      case 'kubeconfig':
-        return <span style={{ color: '#f7971e', fontSize: '12px' }}>📄</span>;
+        return <span style={{ fontSize: '12px' }}>🛡️</span>;
       default:
         return null;
     }
@@ -1229,8 +1031,8 @@ function InlineInfoItem({ label, value, iconType }: { label: string; value: stri
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0, fontSize: "12px" }}>
       {getIcon()}
-      <span style={{ color: "var(--text-secondary)", opacity: 0.8 }}>{label}:</span>
-      <span style={{ color: "var(--text-primary)", fontWeight: 500, whiteSpace: "nowrap" }} title={value}>{value}</span>
+      <span style={{ color: "hsl(var(--muted-foreground))", opacity: 0.8 }}>{label}:</span>
+      <span style={{ color: "hsl(var(--foreground))", fontWeight: 500, whiteSpace: "nowrap" }} title={value}>{value}</span>
     </div>
   );
 }
@@ -1259,21 +1061,21 @@ function XtermView({ shellId, lang }: XtermViewProps) {
 
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 14,
+      fontSize: 13,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       scrollback: 50000,
       theme: {
-        background: "#000000",
-        foreground: "#f3f4f6",
-        cursor: "#00f2fe",
-        black: "#000000",
+        background: "#f8fafc",
+        foreground: "#0f172a",
+        cursor: "#0f172a",
+        black: "#0f172a",
         red: "#ef4444",
-        green: "#22c55e",
-        yellow: "#eab308",
-        blue: "#3b82f6",
-        magenta: "#a855f7",
-        cyan: "#06b6d4",
-        white: "#f3f4f6",
+        green: "#10b981",
+        yellow: "#d97706",
+        blue: "#2563eb",
+        magenta: "#c084fc",
+        cyan: "#0891b2",
+        white: "#f8fafc",
       }
     });
 
@@ -1318,15 +1120,22 @@ function XtermView({ shellId, lang }: XtermViewProps) {
   }, [shellId]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", background: "#000" }}>
-      <div className="glass-panel" style={{ padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--panel-border)", borderRadius: "0", background: "rgba(255,255,255,0.01)" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", backgroundColor: "hsl(var(--background))" }}>
+      <div style={{ 
+        padding: "10px 20px", 
+        display: "flex", 
+        justifyContent: "space-between", 
+        alignItems: "center", 
+        borderBottom: "1px solid hsl(var(--border))", 
+        backgroundColor: "hsl(var(--card))" 
+      }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--accent-neon)", boxShadow: "0 0 8px var(--accent-neon)" }} />
-          <span style={{ fontSize: "14px", fontWeight: 600 }}>{t("activeTerminal")}: {shellId}</span>
+          <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#22c55e" }} />
+          <span style={{ fontSize: "13px", fontWeight: 600 }}>{t("activeTerminal")}: {shellId}</span>
           {isHeartbeating && (
             <div style={{ 
               fontSize: "10px", 
-              color: "var(--accent-neon)", 
+              color: "#22c55e", 
               marginLeft: "10px",
               display: "flex",
               alignItems: "center",
@@ -1337,17 +1146,14 @@ function XtermView({ shellId, lang }: XtermViewProps) {
             </div>
           )}
         </div>
-        <div style={{ fontSize: "12px", color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "15px" }}>
+        <div style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))", display: "flex", alignItems: "center", gap: "15px" }}>
           <button 
             onClick={() => terminalRef.current?.clear()}
+            className="shadcn-btn shadcn-btn-outline"
             style={{ 
-              background: "transparent", 
-              border: "1px solid var(--panel-border)", 
-              color: "var(--text-secondary)",
               padding: "2px 8px",
-              borderRadius: "4px",
               fontSize: "11px",
-              cursor: "pointer"
+              height: "24px"
             }}
           >
             {t("clear")}
@@ -1357,7 +1163,7 @@ function XtermView({ shellId, lang }: XtermViewProps) {
       </div>
       
       <div style={{ flex: 1, position: "relative", padding: "10px" }}>
-        <div ref={containerRef} style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0, padding: "10px", boxSizing: "border-box" }} />
+        <div ref={containerRef} style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0, padding: "12px", boxSizing: "border-box" }} />
       </div>
 
       <style>{`
@@ -1550,26 +1356,13 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
     }
   };
 
-  const btnStyle = (color = "rgba(255,255,255,0.08)"): React.CSSProperties => ({
-    background: color,
-    border: "1px solid rgba(255,255,255,0.1)",
-    color: "var(--text-primary)",
-    borderRadius: "6px",
-    padding: "6px 14px",
-    fontSize: "12px",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    gap: "5px",
-    transition: "all 0.2s ease",
-    whiteSpace: "nowrap" as const,
-  });
+
 
   return (
-    <div style={{ padding: "24px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box", overflow: "hidden", gap: "12px" }}>
+    <div style={{ padding: "24px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box", overflow: "hidden", gap: "16px" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h2 style={{ fontSize: "18px", fontWeight: 700, margin: 0, color: "var(--text-primary)" }}>
+        <h2 style={{ fontSize: "16px", fontWeight: 600, margin: 0, color: "hsl(var(--foreground))" }}>
           📂 {t("sftpTitle")}
         </h2>
         {/* Status Toast */}
@@ -1578,9 +1371,9 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
             fontSize: "12px",
             padding: "6px 14px",
             borderRadius: "6px",
-            background: status.type === "success" ? "rgba(16,185,129,0.15)" : "rgba(245,87,108,0.15)",
-            border: `1px solid ${status.type === "success" ? "rgba(16,185,129,0.4)" : "rgba(245,87,108,0.4)"}`,
-            color: status.type === "success" ? "#10b981" : "var(--accent-pink)",
+            background: status.type === "success" ? "hsl(var(--primary) / 0.1)" : "hsl(var(--destructive) / 0.1)",
+            border: `1px solid ${status.type === "success" ? "hsl(var(--primary) / 0.3)" : "hsl(var(--destructive) / 0.3)"}`,
+            color: status.type === "success" ? "hsl(var(--foreground))" : "hsl(var(--destructive-foreground))",
             animation: "fadeIn 0.3s ease",
           }}>
             {status.msg}
@@ -1589,41 +1382,39 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
       </div>
 
       {/* Toolbar */}
-      <div className="glass-panel" style={{ padding: "10px 14px", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-        <button onClick={handleBack} disabled={path === "/"} style={btnStyle()}
-          onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.12)")}
-          onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}>
+      <div className="shadcn-card" style={{ padding: "8px 12px", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", borderRadius: "6px" }}>
+        <button onClick={handleBack} disabled={path === "/"} className="shadcn-btn shadcn-btn-outline" style={{ padding: "6px 12px", height: "32px", fontSize: "12px" }}>
           ← {t("backBtn")}
         </button>
 
-        <div style={{ flex: 1, fontFamily: "monospace", fontSize: "13px", color: "var(--text-secondary)", padding: "0 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          <span style={{ color: "var(--accent-blue)" }}>/</span>
+        <div style={{ flex: 1, fontFamily: "monospace", fontSize: "13px", color: "hsl(var(--muted-foreground))", padding: "0 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ color: "hsl(var(--foreground))" }}>/</span>
           {path.replace(/^\//, "").split("/").map((seg, i, arr) => (
             <span key={i}>
               <span
-                style={{ color: i === arr.length - 1 ? "var(--text-primary)" : "var(--text-secondary)", cursor: "pointer" }}
+                style={{ color: i === arr.length - 1 ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))", cursor: "pointer" }}
                 onClick={() => {
                   const newPath = "/" + arr.slice(0, i + 1).join("/");
                   loadFiles(newPath);
                 }}
               >{seg}</span>
-              {i < arr.length - 1 && <span style={{ color: "var(--text-secondary)" }}>/</span>}
+              {i < arr.length - 1 && <span style={{ color: "hsl(var(--border))" }}>/</span>}
             </span>
           ))}
         </div>
 
         <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
           {/* Mkdir */}
-          <button onClick={() => { setMkdirMode(true); setMkdirName(""); }} style={btnStyle("rgba(247,151,30,0.12)")}>
+          <button onClick={() => { setMkdirMode(true); setMkdirName(""); }} className="shadcn-btn shadcn-btn-outline" style={{ padding: "6px 12px", height: "32px", fontSize: "12px" }}>
             📁 {t("sftpMkdir")}
           </button>
           {/* Upload */}
-          <button onClick={() => uploadRef.current?.click()} style={btnStyle("rgba(0,242,254,0.1)")}>
+          <button onClick={() => uploadRef.current?.click()} className="shadcn-btn shadcn-btn-outline" style={{ padding: "6px 12px", height: "32px", fontSize: "12px" }}>
             ⬆ {t("sftpUpload")}
           </button>
           <input ref={uploadRef} type="file" style={{ display: "none" }} onChange={handleUpload} />
           {/* Refresh */}
-          <button onClick={() => loadFiles(path)} style={btnStyle()}>
+          <button onClick={() => loadFiles(path)} className="shadcn-btn shadcn-btn-outline" style={{ padding: "6px 12px", height: "32px", fontSize: "12px" }}>
             🔄 {t("sftpRefresh")}
           </button>
         </div>
@@ -1638,52 +1429,48 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
             onChange={e => setMkdirName(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") handleMkdir(); if (e.key === "Escape") setMkdirMode(false); }}
             placeholder={t("sftpMkdirPlaceholder")}
-            style={{
-              flex: 1, background: "rgba(0,0,0,0.3)", border: "1px solid var(--panel-border)",
-              borderRadius: "6px", padding: "7px 12px", color: "var(--text-primary)", fontSize: "13px"
-            }}
+            className="shadcn-input"
+            style={{ flex: 1 }}
           />
-          <button onClick={handleMkdir} style={{ ...btnStyle("rgba(247,151,30,0.2)"), fontWeight: 700 }}>✓ 创建</button>
-          <button onClick={() => setMkdirMode(false)} style={btnStyle()}>✕</button>
+          <button onClick={handleMkdir} className="shadcn-btn shadcn-btn-primary" style={{ padding: "8px 16px", height: "36px" }}>✓ 创建</button>
+          <button onClick={() => setMkdirMode(false)} className="shadcn-btn shadcn-btn-outline" style={{ padding: "8px 12px", height: "36px" }}>✕</button>
         </div>
       )}
 
       {/* Rename inline input */}
       {renameTarget && (
-        <div style={{ display: "flex", gap: "8px", alignItems: "center", background: "rgba(0,242,254,0.06)", border: "1px solid rgba(0,242,254,0.2)", borderRadius: "8px", padding: "10px 14px" }}>
-          <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>重命名 <span style={{ color: "var(--accent-blue)" }}>{renameTarget.name}</span> →</span>
+        <div className="shadcn-card" style={{ display: "flex", gap: "8px", alignItems: "center", padding: "10px 14px", borderRadius: "6px" }}>
+          <span style={{ fontSize: "13px", color: "hsl(var(--muted-foreground))" }}>重命名 <span style={{ color: "hsl(var(--foreground))", fontWeight: 600 }}>{renameTarget.name}</span> →</span>
           <input
             autoFocus
             value={renameValue}
             onChange={e => setRenameValue(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") handleRenameSubmit(); if (e.key === "Escape") setRenameTarget(null); }}
             placeholder="新名称"
-            style={{
-              flex: 1, background: "rgba(0,0,0,0.3)", border: "1px solid var(--panel-border)",
-              borderRadius: "6px", padding: "6px 12px", color: "var(--text-primary)", fontSize: "13px"
-            }}
+            className="shadcn-input"
+            style={{ flex: 1 }}
           />
-          <button onClick={handleRenameSubmit} style={{ ...btnStyle("rgba(0,242,254,0.15)"), fontWeight: 700 }}>✓ 确认</button>
-          <button onClick={() => setRenameTarget(null)} style={btnStyle()}>✕</button>
+          <button onClick={handleRenameSubmit} className="shadcn-btn shadcn-btn-primary" style={{ padding: "8px 16px", height: "36px" }}>✓ 确认</button>
+          <button onClick={() => setRenameTarget(null)} className="shadcn-btn shadcn-btn-outline" style={{ padding: "8px 12px", height: "36px" }}>✕</button>
         </div>
       )}
 
       {/* Files Table */}
-      <div className="glass-panel" style={{ flex: 1, overflowY: "auto", padding: "4px" }}>
+      <div className="shadcn-card" style={{ flex: 1, overflowY: "auto", padding: "4px" }}>
         {loading ? (
-          <div style={{ padding: "60px", textAlign: "center", color: "var(--text-secondary)" }}>
+          <div style={{ padding: "60px", textAlign: "center", color: "hsl(var(--muted-foreground))" }}>
             <div style={{ fontSize: "24px", marginBottom: "8px" }}>⏳</div>
             加载中...
           </div>
         ) : files.length === 0 ? (
-          <div style={{ padding: "60px", textAlign: "center", color: "var(--text-secondary)" }}>
+          <div style={{ padding: "60px", textAlign: "center", color: "hsl(var(--muted-foreground))" }}>
             <div style={{ fontSize: "32px", marginBottom: "8px" }}>📭</div>
             {t("sftpEmpty")}
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
             <thead>
-              <tr style={{ borderBottom: "1px solid var(--panel-border)", color: "var(--text-secondary)", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              <tr style={{ borderBottom: "1px solid hsl(var(--border))", color: "hsl(var(--muted-foreground))", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                 <th style={{ padding: "10px 12px" }}>{t("fileName")}</th>
                 <th style={{ padding: "10px 12px", width: "90px" }}>{t("fileSize")}</th>
                 <th style={{ padding: "10px 12px", width: "160px" }}>{t("fileTime")}</th>
@@ -1698,13 +1485,13 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                     key={idx}
                     onClick={() => handleRowClick(file)}
                     style={{
-                      borderBottom: "1px solid rgba(255,255,255,0.02)",
+                      borderBottom: "1px solid hsl(var(--border))",
                       cursor: "pointer",
-                      background: isSelected ? "rgba(0,242,254,0.06)" : "transparent",
-                      transition: "background 0.15s"
+                      backgroundColor: isSelected ? "hsl(var(--accent))" : "transparent",
+                      transition: "background-color 0.15s"
                     }}
-                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
-                    onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = "hsl(var(--accent) / 0.3)"; }}
+                    onMouseLeave={e => { if (!isSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
                   >
                     <td style={{ padding: "10px 12px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1712,17 +1499,17 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                           {file.type === "dir" ? "📁" : getFileIcon(file.name)}
                         </span>
                         <span style={{
-                          fontWeight: file.type === "dir" ? 600 : 400,
-                          color: file.type === "dir" ? "#f7971e" : "var(--text-primary)"
+                          fontWeight: file.type === "dir" ? 500 : 400,
+                          color: file.type === "dir" ? "#f59e0b" : "hsl(var(--foreground))"
                         }}>
                           {file.name}
                         </span>
                       </div>
                     </td>
-                    <td style={{ padding: "10px 12px", color: "var(--text-secondary)", fontFamily: "monospace", fontSize: "12px" }}>
+                    <td style={{ padding: "10px 12px", color: "hsl(var(--muted-foreground))", fontFamily: "monospace", fontSize: "12px" }}>
                       {file.type === "dir" ? "—" : formatBytes(file.size)}
                     </td>
-                    <td style={{ padding: "10px 12px", color: "var(--text-secondary)", fontSize: "12px" }}>
+                    <td style={{ padding: "10px 12px", color: "hsl(var(--muted-foreground))", fontSize: "12px" }}>
                       {new Date(file.mtime * 1000).toLocaleString()}
                     </td>
                     <td style={{ padding: "8px 12px", textAlign: "right" }}>
@@ -1732,13 +1519,8 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                           <button
                             title={t("sftpDownload")}
                             onClick={() => handleDownload(file)}
-                            style={{
-                              background: "rgba(0,242,254,0.08)", border: "1px solid rgba(0,242,254,0.2)",
-                              color: "#00f2fe", borderRadius: "5px", padding: "4px 8px",
-                              fontSize: "11px", cursor: "pointer", transition: "all 0.2s"
-                            }}
-                            onMouseEnter={e => (e.currentTarget.style.background = "rgba(0,242,254,0.18)")}
-                            onMouseLeave={e => (e.currentTarget.style.background = "rgba(0,242,254,0.08)")}
+                            className="shadcn-btn shadcn-btn-outline"
+                            style={{ padding: "4px 8px", fontSize: "11px", height: "24px" }}
                           >
                             ⬇ {t("sftpDownload")}
                           </button>
@@ -1747,13 +1529,8 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                         <button
                           title={t("sftpRename")}
                           onClick={() => { setRenameTarget(file); setRenameValue(file.name); }}
-                          style={{
-                            background: "rgba(247,151,30,0.08)", border: "1px solid rgba(247,151,30,0.2)",
-                            color: "#f7971e", borderRadius: "5px", padding: "4px 8px",
-                            fontSize: "11px", cursor: "pointer", transition: "all 0.2s"
-                          }}
-                          onMouseEnter={e => (e.currentTarget.style.background = "rgba(247,151,30,0.18)")}
-                          onMouseLeave={e => (e.currentTarget.style.background = "rgba(247,151,30,0.08)")}
+                          className="shadcn-btn shadcn-btn-outline"
+                          style={{ padding: "4px 8px", fontSize: "11px", height: "24px" }}
                         >
                           ✏ {t("sftpRename")}
                         </button>
@@ -1761,13 +1538,8 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                         <button
                           title={t("sftpDelete")}
                           onClick={() => handleDelete(file)}
-                          style={{
-                            background: "rgba(245,87,108,0.08)", border: "1px solid rgba(245,87,108,0.2)",
-                            color: "var(--accent-pink)", borderRadius: "5px", padding: "4px 8px",
-                            fontSize: "11px", cursor: "pointer", transition: "all 0.2s"
-                          }}
-                          onMouseEnter={e => (e.currentTarget.style.background = "rgba(245,87,108,0.18)")}
-                          onMouseLeave={e => (e.currentTarget.style.background = "rgba(245,87,108,0.08)")}
+                          className="shadcn-btn shadcn-btn-outline"
+                          style={{ padding: "4px 8px", fontSize: "11px", height: "24px" }}
                         >
                           🗑 {t("sftpDelete")}
                         </button>
@@ -1805,331 +1577,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-// ======== VIEW 3: Kubernetes View ========
-
-interface K8sViewProps {
-  sessionId: string;
-  lang: Language;
-}
-
-interface PodInfo {
-  namespace: string;
-  name: string;
-  status: string;
-  container?: string;
-}
-
-function K8sView({ sessionId, lang }: K8sViewProps) {
-  const [ns, setNs] = useState("default");
-  const [pods, setPods] = useState<PodInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [selectedPodForLogs, setSelectedPodForLogs] = useState<PodInfo | null>(null);
-  const [logsText, setLogsText] = useState("");
-  const [logsLoading, setLogsLoading] = useState(false);
-
-  // Arthas state
-  const [selectedPodForArthas, setSelectedPodForArthas] = useState<PodInfo | null>(null);
-  const [arthasCmd, setArthasCmd] = useState("thread -n 3");
-  const [arthasOutput, setArthasOutput] = useState("");
-  const [arthasLoading, setArthasLoading] = useState(false);
-  const [arthasVersion, setArthasVersion] = useState("");
-  const [jdkVersion, setJdkVersion] = useState("");
-
-  const t = (key: keyof typeof translations["en"]): string => {
-    return translations[lang][key] || translations["en"][key] || "";
-  };
-
-  const loadPods = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/k8s/pods?namespace=${encodeURIComponent(ns)}`);
-      const data = await res.json();
-      if (!data.isError && data.content && data.content[0]) {
-        // Parse Kubectl output table
-        const text = data.content[0].text;
-        const lines = text.trim().split("\n");
-        const list: PodInfo[] = [];
-        
-        // Simple line parser for kubectl get pods output
-        const hasNamespace = lines[0]?.startsWith("NAMESPACE");
-        
-        for (let i = 1; i < lines.length; i++) {
-          const cols = lines[i].split(/\s+/).filter(Boolean);
-          if (cols.length >= 3) {
-            list.push({
-              namespace: hasNamespace ? cols[0] : ns,
-              name: hasNamespace ? cols[1] : cols[0],
-              status: hasNamespace ? cols[3] : cols[2]
-            });
-          }
-        }
-        setPods(list);
-      }
-    } catch (e) {
-      console.error("Failed to load Pods:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadPods();
-  }, [sessionId, ns]);
-
-  const loadLogs = async (pod: PodInfo) => {
-    setSelectedPodForLogs(pod);
-    setLogsLoading(true);
-    setLogsText("");
-    try {
-      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/k8s/logs?namespace=${encodeURIComponent(pod.namespace)}&pod=${encodeURIComponent(pod.name)}&tail=50`);
-      const data = await res.json();
-      if (data.content && data.content[0]) {
-        setLogsText(data.content[0].text);
-      }
-    } catch (e) {
-      setLogsText(`Failed to load logs: ${e}`);
-    } finally {
-      setLogsLoading(false);
-    }
-  };
-
-  const handleRunArthas = async () => {
-    if (!selectedPodForArthas) return;
-    setArthasLoading(true);
-    setArthasOutput("Attaching and executing Arthas command, please wait...");
-    try {
-      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/k8s/arthas`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          namespace: selectedPodForArthas.namespace,
-          pod: selectedPodForArthas.name,
-          command: arthasCmd,
-          arthasVersion,
-          jdkVersion
-        })
-      });
-      const data = await res.json();
-      if (data.content && data.content[0]) {
-        setArthasOutput(data.content[0].text);
-      }
-    } catch (e) {
-      setArthasOutput(`Arthas Error: ${e}`);
-    } finally {
-      setArthasLoading(false);
-    }
-  };
-
-  return (
-    <div style={{ padding: "24px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box", overflow: "hidden" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-        <h2 style={{ fontSize: "20px", fontWeight: 600, margin: 0 }}>{t("tabK8s")}</h2>
-        
-        {/* Namespace Select */}
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <span style={{ fontSize: "14px", color: "var(--text-secondary)" }}>{t("namespace")}:</span>
-          <select
-            value={ns}
-            onChange={(e) => setNs(e.target.value)}
-            style={{
-              background: "rgba(0,0,0,0.3)",
-              border: "1px solid var(--panel-border)",
-              color: "var(--text-primary)",
-              borderRadius: "6px",
-              padding: "4px 10px",
-              fontSize: "13px"
-            }}
-          >
-            <option value="default">default</option>
-            <option value="kube-system">kube-system</option>
-            <option value="all">All Namespaces</option>
-          </select>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: "24px", flex: 1, overflow: "hidden" }}>
-        
-        {/* Left: Pod List Table */}
-        <div className="glass-panel" style={{ flex: 1, overflowY: "auto", padding: "8px" }}>
-          {loading ? (
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-secondary)" }}>Loading Pods...</div>
-          ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px", textAlign: "left" }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--panel-border)", color: "var(--text-secondary)" }}>
-                  <th style={{ padding: "12px" }}>Name</th>
-                  <th style={{ padding: "12px" }}>Namespace</th>
-                  <th style={{ padding: "12px" }}>Status</th>
-                  <th style={{ padding: "12px" }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pods.map((pod, idx) => (
-                  <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.02)" }}>
-                    <td style={{ padding: "12px", fontWeight: 500, fontFamily: "monospace" }}>{pod.name}</td>
-                    <td style={{ padding: "12px", color: "var(--text-secondary)" }}>{pod.namespace}</td>
-                    <td style={{ padding: "12px" }}>
-                      <span style={{
-                        padding: "2px 8px",
-                        borderRadius: "4px",
-                        fontSize: "11px",
-                        background: pod.status === "Running" ? "rgba(0, 255, 136, 0.1)" : "rgba(245, 87, 108, 0.1)",
-                        color: pod.status === "Running" ? "var(--accent-neon)" : "var(--accent-pink)"
-                      }}>
-                        {pod.status}
-                      </span>
-                    </td>
-                    <td style={{ padding: "12px", display: "flex", gap: "8px" }}>
-                      <button
-                        onClick={() => loadLogs(pod)}
-                        style={{
-                          background: "rgba(0, 242, 254, 0.1)",
-                          border: "1px solid rgba(0, 242, 254, 0.3)",
-                          color: "var(--accent-blue)",
-                          borderRadius: "4px",
-                          padding: "3px 8px",
-                          fontSize: "12px",
-                          cursor: "pointer"
-                        }}
-                      >
-                        {t("viewLogs")}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedPodForArthas(pod);
-                          setArthasOutput("");
-                        }}
-                        style={{
-                          background: "rgba(168, 85, 247, 0.1)",
-                          border: "1px solid rgba(168, 85, 247, 0.3)",
-                          color: "var(--accent-pink)",
-                          borderRadius: "4px",
-                          padding: "3px 8px",
-                          fontSize: "12px",
-                          cursor: "pointer"
-                        }}
-                      >
-                        {t("attachArthas")}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        {/* Right Panel: Logs or Arthas Console */}
-        <div style={{ width: "450px", display: "flex", flexDirection: "column", gap: "16px" }}>
-          
-          {/* Logs Terminal view */}
-          {selectedPodForLogs && (
-            <div className="glass-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--panel-border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: "14px", fontWeight: 600 }}>{t("k8sLogsTitle")} ({selectedPodForLogs.name.substring(0, 12)}...)</span>
-                <button
-                  onClick={() => setSelectedPodForLogs(null)}
-                  style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer" }}
-                >
-                  ✕
-                </button>
-              </div>
-              <div style={{ flex: 1, background: "#000", padding: "12px", overflowY: "auto", fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap" }}>
-                {logsLoading ? "Streaming Logs..." : logsText}
-              </div>
-            </div>
-          )}
-
-          {/* Arthas Diagnostic Modal/Panel */}
-          {selectedPodForArthas && (
-            <div className="glass-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--panel-border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: "14px", fontWeight: 600 }}>{t("arthasDiagTitle")}</span>
-                <button
-                  onClick={() => setSelectedPodForArthas(null)}
-                  style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer" }}
-                >
-                  ✕
-                </button>
-              </div>
-              <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "12px", flex: 1, overflow: "hidden" }}>
-                <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
-                  Target: <code style={{ color: "var(--accent-blue)" }}>{selectedPodForArthas.name}</code>
-                </div>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <input
-                    type="text"
-                    value={arthasCmd}
-                    onChange={(e) => setArthasCmd(e.target.value)}
-                    placeholder={t("arthasCmdPlaceholder")}
-                    style={{
-                      flex: 1,
-                      background: "rgba(0,0,0,0.5)",
-                      border: "1px solid var(--panel-border)",
-                      color: "var(--text-primary)",
-                      borderRadius: "6px",
-                      padding: "8px 12px",
-                      fontSize: "13px"
-                    }}
-                  />
-                  <button
-                    className="glow-btn"
-                    onClick={handleRunArthas}
-                    disabled={arthasLoading}
-                    style={{
-                      padding: "8px 16px",
-                      borderRadius: "6px",
-                      fontSize: "13px"
-                    }}
-                  >
-                    {t("arthasRunBtn")}
-                  </button>
-                </div>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <input
-                    type="text"
-                    value={arthasVersion}
-                    onChange={(e) => setArthasVersion(e.target.value)}
-                    placeholder={t("arthasVersionPlaceholder")}
-                    style={{
-                      flex: 1,
-                      background: "rgba(255,255,255,0.05)",
-                      border: "1px solid var(--panel-border)",
-                      color: "var(--text-primary)",
-                      borderRadius: "6px",
-                      padding: "6px 10px",
-                      fontSize: "12px"
-                    }}
-                  />
-                  <input
-                    type="text"
-                    value={jdkVersion}
-                    onChange={(e) => setJdkVersion(e.target.value)}
-                    placeholder={t("jdkVersionPlaceholder")}
-                    style={{
-                      flex: 1,
-                      background: "rgba(255,255,255,0.05)",
-                      border: "1px solid var(--panel-border)",
-                      color: "var(--text-primary)",
-                      borderRadius: "6px",
-                      padding: "6px 10px",
-                      fontSize: "12px"
-                    }}
-                  />
-                </div>
-                {/* Console Output box */}
-                <div style={{ flex: 1, background: "#000", borderRadius: "6px", padding: "12px", fontFamily: "monospace", fontSize: "12px", overflowY: "auto", whiteSpace: "pre-wrap", color: "var(--accent-neon)" }}>
-                  {arthasOutput}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // ======== VIEW 4: System Monitor View ========
@@ -2205,30 +1652,30 @@ function MonitorView({ sessionId, lang }: MonitorViewProps) {
   }, [sessionId]);
 
   return (
-    <div style={{ padding: "24px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box", overflow: "hidden" }}>
-      <h2 style={{ fontSize: "20px", fontWeight: 600, marginBottom: "16px" }}>{t("tabMonitor")}</h2>
+    <div style={{ padding: "24px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box", overflow: "hidden", gap: "16px" }}>
+      <h2 style={{ fontSize: "16px", fontWeight: 600, margin: 0, color: "hsl(var(--foreground))" }}>{t("tabMonitor")}</h2>
 
       <div style={{ display: "flex", gap: "24px", flex: 1, overflow: "hidden" }}>
         
         {/* Left: Sysinfo Text Panel */}
-        <div className="glass-panel" style={{ flex: 1, padding: "20px", display: "flex", flexDirection: "column" }}>
-          <h3 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "12px", color: "var(--accent-blue)" }}>
+        <div className="shadcn-card" style={{ flex: 1, padding: "16px", display: "flex", flexDirection: "column" }}>
+          <h3 style={{ fontSize: "14px", fontWeight: 600, marginBottom: "12px", color: "hsl(var(--foreground))" }}>
             {t("sysLoad")}
           </h3>
-          <div style={{ flex: 1, background: "rgba(0,0,0,0.2)", borderRadius: "8px", padding: "16px", fontFamily: "monospace", fontSize: "13px", whiteSpace: "pre-wrap", overflowY: "auto", border: "1px solid rgba(255,255,255,0.02)" }}>
+          <div style={{ flex: 1, background: "rgba(0,0,0,0.2)", borderRadius: "6px", padding: "16px", fontFamily: "monospace", fontSize: "13px", whiteSpace: "pre-wrap", overflowY: "auto", border: "1px solid hsl(var(--border))" }}>
             {loading && !sysinfo ? "Loading diagnostics..." : sysinfo}
           </div>
         </div>
 
         {/* Right: Active processes table */}
-        <div className="glass-panel" style={{ flex: 1, padding: "20px", display: "flex", flexDirection: "column" }}>
-          <h3 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "12px", color: "var(--accent-blue)" }}>
+        <div className="shadcn-card" style={{ flex: 1, padding: "16px", display: "flex", flexDirection: "column" }}>
+          <h3 style={{ fontSize: "14px", fontWeight: 600, marginBottom: "12px", color: "hsl(var(--foreground))" }}>
             {t("processes")}
           </h3>
           <div style={{ flex: 1, overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
               <thead>
-                <tr style={{ borderBottom: "1px solid var(--panel-border)", color: "var(--text-secondary)" }}>
+                <tr style={{ borderBottom: "1px solid hsl(var(--border))", color: "hsl(var(--muted-foreground))" }}>
                   <th style={{ padding: "8px" }}>PID</th>
                   <th style={{ padding: "8px" }}>CPU%</th>
                   <th style={{ padding: "8px" }}>MEM%</th>
@@ -2237,10 +1684,10 @@ function MonitorView({ sessionId, lang }: MonitorViewProps) {
               </thead>
               <tbody>
                 {processes.map((proc, idx) => (
-                  <tr key={idx} style={{ borderBottom: "1px solid rgba(255,255,255,0.01)" }}>
+                  <tr key={idx} style={{ borderBottom: "1px solid hsl(var(--border))" }}>
                     <td style={{ padding: "8px", fontFamily: "monospace" }}>{proc.pid}</td>
-                    <td style={{ padding: "8px", color: "var(--accent-neon)", fontWeight: 600 }}>{proc.cpu}%</td>
-                    <td style={{ padding: "8px", color: "var(--accent-blue)" }}>{proc.mem}%</td>
+                    <td style={{ padding: "8px", color: "hsl(var(--foreground))", fontWeight: 600 }}>{proc.cpu}%</td>
+                    <td style={{ padding: "8px", color: "hsl(var(--muted-foreground))" }}>{proc.mem}%</td>
                     <td style={{ padding: "8px", fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "180px" }} title={proc.command}>
                       {proc.command}
                     </td>

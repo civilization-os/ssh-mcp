@@ -6,3 +6,4 @@ sessions-store.json
 sessions-meta.json
 .mcp.json
 coverage/
+.mcp-key

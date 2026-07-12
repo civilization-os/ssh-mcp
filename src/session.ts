@@ -1,19 +1,14 @@
 import { Client, ConnectConfig } from "ssh2";
-import { Session, SshCredentials, K8sConnectArgs } from "./types.js";
+import { Session, SshCredentials } from "./types.js";
 import fs from "fs";
 import path from "path";
-import os from "os";
 import { fileURLToPath } from "url";
+import crypto from "crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS_STORE_PATH = path.join(__dirname, "..", "sessions-store.json");
 const SESSIONS_META_PATH = path.join(__dirname, "..", "sessions-meta.json");
-const KUBECONFIG_DIR = path.join(os.tmpdir(), "ssh-mcp-kubeconfigs");
-
-// Ensure temp directory exists
-if (!fs.existsSync(KUBECONFIG_DIR)) {
-  fs.mkdirSync(KUBECONFIG_DIR, { recursive: true });
-}
+const ENCRYPTION_KEY_PATH = path.join(__dirname, "..", ".mcp-key");
 
 export const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 min
@@ -24,7 +19,7 @@ const sessions = new Map<string, Session>();
 // Runtime-only credentials kept in memory for the life of this process.
 interface StoredCredentials {
   id: string;
-  type: "ssh" | "k8s";
+  type: "ssh";
   label: string;
   host: string;
   port: number;
@@ -32,24 +27,21 @@ interface StoredCredentials {
   password?: string;
   privateKey?: string;
   passphrase?: string;
-  kubectlPath?: string;
-  kubeconfig?: string;
-  kubeconfigContent?: string;
 }
 
-/** Non-sensitive session metadata persisted across restarts (credentials never saved). */
+/** Non-sensitive session metadata persisted across restarts (credentials now encrypted and saved). */
 interface SessionMeta {
   id: string;
-  type: "ssh" | "k8s";
+  type: "ssh";
   label: string;
   host: string;
   port: number;
   username: string;
   createdAt: number;
   lastUsedAt: number;
-  kubectlPath?: string;
-  kubeconfig?: string;
-  kubeconfigPath?: string;
+  passwordEncrypted?: string;
+  privateKeyEncrypted?: string;
+  passphraseEncrypted?: string;
 }
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -58,105 +50,53 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-function toBase64(value: string): string {
-  return Buffer.from(value, "utf-8").toString("base64");
+function getOrCreateEncryptionKey(): Buffer {
+  try {
+    if (!fs.existsSync(ENCRYPTION_KEY_PATH)) {
+      const key = crypto.randomBytes(32).toString("hex");
+      fs.writeFileSync(ENCRYPTION_KEY_PATH, key, "utf-8");
+    }
+    const keyHex = fs.readFileSync(ENCRYPTION_KEY_PATH, "utf-8").trim();
+    return Buffer.from(keyHex, "hex");
+  } catch (e) {
+    console.error("[session] Failed to get or create encryption key:", e);
+    return Buffer.alloc(32, "ssh-mcp-fallback-encryption-key-32");
+  }
 }
 
-function looksLikePem(value: string): boolean {
-  return value.includes("-----BEGIN ");
+function encrypt(text: string): string {
+  try {
+    const key = getOrCreateEncryptionKey();
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    let encrypted = cipher.update(text, "utf-8", "hex");
+    encrypted += cipher.final("hex");
+    const authTag = cipher.getAuthTag().toString("hex");
+    return `${iv.toString("hex")}:${authTag}:${encrypted}`;
+  } catch (e) {
+    console.error("[session] Encryption failed:", e);
+    return "";
+  }
 }
 
-function looksLikeBase64(value: string): boolean {
-  const normalized = value.replace(/\s+/g, "");
-  return normalized.length > 0 && normalized.length % 4 === 0 && /^[A-Za-z0-9+/=]+$/.test(normalized);
-}
-
-function readFileIfPath(value: string): string {
-  if (value.length < 4096 && fs.existsSync(value) && fs.statSync(value).isFile()) {
-    return fs.readFileSync(value, "utf-8");
+function decrypt(cipherText: string): string {
+  try {
+    if (!cipherText || !cipherText.includes(":")) return "";
+    const parts = cipherText.split(":");
+    if (parts.length !== 3) return "";
+    const [ivHex, authTagHex, encryptedHex] = parts;
+    const key = getOrCreateEncryptionKey();
+    const iv = Buffer.from(ivHex, "hex");
+    const authTag = Buffer.from(authTagHex, "hex");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(encryptedHex, "hex", "utf-8");
+    decrypted += decipher.final("utf-8");
+    return decrypted;
+  } catch (e) {
+    console.error("[session] Decryption failed:", e);
+    return "";
   }
-  return value;
-}
-
-function normalizeKubeData(value?: string): string | undefined {
-  const normalized = normalizeOptionalString(value);
-  if (!normalized) return undefined;
-  const content = readFileIfPath(normalized).trim();
-  if (looksLikePem(content)) return toBase64(content);
-  if (looksLikeBase64(content)) return content.replace(/\s+/g, "");
-  return toBase64(content);
-}
-
-function buildKubeconfigFromArgs(args: K8sConnectArgs, sessionId: string): string {
-  const server = normalizeOptionalString(args.server);
-  if (!server) {
-    throw new Error("k8s_connect requires either kubeconfig or server");
-  }
-
-  const token = normalizeOptionalString(args.token);
-  const clientCertificateData = normalizeKubeData(args.clientCertificateData ?? args.clientCertificate);
-  const clientKeyData = normalizeKubeData(args.clientKeyData ?? args.clientKey);
-  const certificateAuthorityData = normalizeKubeData(args.certificateAuthorityData ?? args.certificateAuthority);
-
-  if (!token && !(clientCertificateData && clientKeyData)) {
-    throw new Error("k8s_connect direct mode requires token or both clientCertificate and clientKey");
-  }
-
-  const clusterName = `ssh-mcp-cluster-${sessionId}`;
-  const userName = `ssh-mcp-user-${sessionId}`;
-  const contextName = `ssh-mcp-context-${sessionId}`;
-  const lines = [
-    "apiVersion: v1",
-    "kind: Config",
-    "clusters:",
-    `- name: ${clusterName}`,
-    "  cluster:",
-    `    server: ${server}`,
-  ];
-
-  if (args.insecureSkipTlsVerify) {
-    lines.push("    insecure-skip-tls-verify: true");
-  } else if (certificateAuthorityData) {
-    lines.push(`    certificate-authority-data: ${certificateAuthorityData}`);
-  }
-
-  const tlsServerName = normalizeOptionalString(args.serverName);
-  if (tlsServerName) {
-    lines.push(`    tls-server-name: ${tlsServerName}`);
-  }
-
-  lines.push(
-    "users:",
-    `- name: ${userName}`,
-    "  user:"
-  );
-
-  if (token) {
-    lines.push(`    token: ${JSON.stringify(token)}`);
-  } else {
-    lines.push(`    client-certificate-data: ${clientCertificateData}`);
-    lines.push(`    client-key-data: ${clientKeyData}`);
-  }
-
-  lines.push(
-    "contexts:",
-    `- name: ${contextName}`,
-    "  context:",
-    `    cluster: ${clusterName}`,
-    `    user: ${userName}`
-  );
-
-  const namespace = normalizeOptionalString(args.namespace);
-  if (namespace) {
-    lines.push(`    namespace: ${namespace}`);
-  }
-
-  lines.push(
-    `current-context: ${contextName}`,
-    "preferences: {}"
-  );
-
-  return lines.join("\n") + "\n";
 }
 
 function getStoredCredentials(session: Session): StoredCredentials | undefined {
@@ -176,12 +116,13 @@ function removeLegacySessionsStore() {
   }
 }
 
-/** Persist only non-sensitive metadata so sessions survive a restart. */
+/** Persist metadata along with encrypted sensitive credentials so sessions survive a restart. */
 function saveSessionMeta() {
   removeLegacySessionsStore();
   const meta: SessionMeta[] = [];
   for (const session of sessions.values()) {
-    meta.push({
+    const stored = getStoredCredentials(session);
+    const m: SessionMeta = {
       id: session.id,
       type: session.type,
       label: session.label,
@@ -190,10 +131,14 @@ function saveSessionMeta() {
       username: session.username,
       createdAt: session.createdAt,
       lastUsedAt: session.lastUsedAt,
-      kubectlPath: session.kubectlPath,
-      kubeconfig: session.kubeconfig,
-      kubeconfigPath: session.kubeconfigPath,
-    });
+    };
+
+    if (stored) {
+      if (stored.password) m.passwordEncrypted = encrypt(stored.password);
+      if (stored.privateKey) m.privateKeyEncrypted = encrypt(stored.privateKey);
+      if (stored.passphrase) m.passphraseEncrypted = encrypt(stored.passphrase);
+    }
+    meta.push(m);
   }
   try {
     fs.writeFileSync(SESSIONS_META_PATH, JSON.stringify(meta, null, 2), "utf-8");
@@ -202,7 +147,7 @@ function saveSessionMeta() {
   }
 }
 
-/** Load metadata from previous run — sessions appear as "disconnected" entries. */
+/** Load metadata from previous run and decrypt credentials into memory. */
 export function loadSessionMeta(): void {
   removeLegacySessionsStore();
   try {
@@ -213,6 +158,22 @@ export function loadSessionMeta(): void {
     for (const m of meta) {
       // Don't re-add if already present
       if (sessions.has(m.id)) continue;
+
+      // Ensure we don't load another session with the same username@host:port
+      if (m.type === "ssh") {
+        let isDuplicate = false;
+        for (const s of sessions.values()) {
+          if (s.type === "ssh" && s.username === m.username && s.host === m.host && s.port === m.port) {
+            isDuplicate = true;
+            break;
+          }
+        }
+        if (isDuplicate) {
+          console.error(`[session] Skipping duplicate session ${m.id} (${m.username}@${m.host}:${m.port}) from metadata`);
+          continue;
+        }
+      }
+      
       const session: Session = {
         id: m.id,
         type: m.type,
@@ -223,10 +184,31 @@ export function loadSessionMeta(): void {
         username: m.username,
         createdAt: m.createdAt,
         lastUsedAt: m.lastUsedAt,
-        kubectlPath: m.kubectlPath,
-        kubeconfig: m.kubeconfig,
-        kubeconfigPath: m.kubeconfigPath,
       };
+
+      const creds: StoredCredentials = {
+        id: m.id,
+        type: m.type,
+        label: m.label,
+        host: m.host,
+        port: m.port,
+        username: m.username,
+      };
+
+      if (m.passwordEncrypted) {
+        const decrypted = decrypt(m.passwordEncrypted);
+        if (decrypted) creds.password = decrypted;
+      }
+      if (m.privateKeyEncrypted) {
+        const decrypted = decrypt(m.privateKeyEncrypted);
+        if (decrypted) creds.privateKey = decrypted;
+      }
+      if (m.passphraseEncrypted) {
+        const decrypted = decrypt(m.passphraseEncrypted);
+        if (decrypted) creds.passphrase = decrypted;
+      }
+
+      (session as any)._creds = creds;
       sessions.set(m.id, session);
     }
     console.error(`[session] Loaded ${meta.length} session(s) from metadata`);
@@ -295,8 +277,6 @@ function startCleanup() {
             const { cleanShellsBySession } = await import("./handlers/shell.js");
             cleanShellsBySession(id);
           } catch {}
-        } else if (session.type === "k8s" && session.kubeconfigPath) {
-          try { fs.unlinkSync(session.kubeconfigPath); } catch {}
         }
         // Keep metadata entry so it survives restart (user can reconnect)
         changed = true;
@@ -354,21 +334,75 @@ export function sshConnect(creds: Partial<SshCredentials>, timeoutMs: number): P
 }
 
 export async function createSession(creds: Partial<SshCredentials>, label?: string): Promise<Session> {
+  const targetHost = creds.host ?? "localhost";
+  const targetPort = creds.port ?? 22;
+  const targetUsername = creds.username ?? "root";
+
+  // Check if session already exists for this username@host:port
+  let existingSession: Session | undefined;
+  for (const s of sessions.values()) {
+    if (
+      s.type === "ssh" &&
+      s.host === targetHost &&
+      s.port === targetPort &&
+      s.username === targetUsername
+    ) {
+      existingSession = s;
+      break;
+    }
+  }
+
   const timeout = creds.timeout ?? 15000;
   const client = await sshConnect(creds, timeout);
+
+  if (existingSession) {
+    // Gracefully disconnect old client if active
+    if (existingSession.client) {
+      existingSession.client.removeAllListeners("error");
+      existingSession.client.removeAllListeners("end");
+      existingSession.client.removeAllListeners("close");
+      try { existingSession.client.end(); } catch {}
+    }
+
+    existingSession.client = client;
+    if (label) {
+      existingSession.label = label;
+    } else if (existingSession.label.includes("@") && existingSession.label.includes(":")) {
+      // If it was using default label, update it
+      existingSession.label = `${targetUsername}@${targetHost}:${targetPort}`;
+    }
+    existingSession.lastUsedAt = Date.now();
+
+    const storedCred: StoredCredentials = {
+      id: existingSession.id,
+      type: "ssh",
+      label: existingSession.label,
+      host: existingSession.host,
+      port: existingSession.port,
+      username: existingSession.username,
+      password: creds.password,
+      privateKey: creds.privateKey ? String(creds.privateKey) : undefined,
+      passphrase: creds.passphrase,
+    };
+    (existingSession as any)._creds = storedCred;
+
+    registerClientListeners(existingSession.id, client);
+    startCleanup();
+    saveSessionMeta();
+    return existingSession;
+  }
+
   const id = generateId();
   const session: Session = {
     id,
     type: "ssh",
     client,
-    label: label ?? `${creds.username ?? "root"}@${creds.host}:${creds.port ?? 22}`,
-    host: creds.host ?? "unknown",
-    port: creds.port ?? 22,
-    username: creds.username ?? "root",
+    label: label ?? `${targetUsername}@${targetHost}:${targetPort}`,
+    host: targetHost,
+    port: targetPort,
+    username: targetUsername,
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
-    kubectlPath: creds.kubectlPath,
-    kubeconfig: creds.kubeconfig,
   };
 
   const storedCred: StoredCredentials = {
@@ -381,55 +415,11 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
     password: creds.password,
     privateKey: creds.privateKey ? String(creds.privateKey) : undefined,
     passphrase: creds.passphrase,
-    kubectlPath: creds.kubectlPath,
-    kubeconfig: creds.kubeconfig,
   };
   (session as any)._creds = storedCred;
 
   sessions.set(session.id, session);
   registerClientListeners(session.id, client);
-  startCleanup();
-  saveSessionMeta();
-  return session;
-}
-
-export async function createK8sSession(args: K8sConnectArgs): Promise<Session> {
-  const id = generateId("k8s");
-  const k8sPath = path.join(KUBECONFIG_DIR, `kubeconfig_${id}`);
-
-  let kubeconfigContent = normalizeOptionalString(args.kubeconfig);
-  if (kubeconfigContent) {
-    kubeconfigContent = readFileIfPath(kubeconfigContent);
-  } else {
-    kubeconfigContent = buildKubeconfigFromArgs(args, id);
-  }
-
-  fs.writeFileSync(k8sPath, kubeconfigContent, { encoding: "utf-8", mode: 0o600 });
-
-  const session: Session = {
-    id,
-    type: "k8s",
-    label: args.name ?? normalizeOptionalString(args.server) ?? "Local K8s Cluster",
-    host: "localhost",
-    port: 0,
-    username: "local",
-    createdAt: Date.now(),
-    lastUsedAt: Date.now(),
-    kubeconfigPath: k8sPath,
-  };
-
-  const storedCred: StoredCredentials = {
-    id,
-    type: "k8s",
-    label: session.label,
-    host: session.host,
-    port: session.port,
-    username: session.username,
-    kubeconfigContent,
-  };
-  (session as any)._creds = storedCred;
-
-  sessions.set(id, session);
   startCleanup();
   saveSessionMeta();
   return session;
@@ -453,8 +443,6 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
     port: creds.port ?? stored.port,
     username: normalizeOptionalString(creds.username) ?? stored.username,
     passphrase: creds.passphrase !== undefined ? normalizeOptionalString(creds.passphrase) : stored.passphrase,
-    kubectlPath: creds.kubectlPath !== undefined ? normalizeOptionalString(creds.kubectlPath) : stored.kubectlPath,
-    kubeconfig: creds.kubeconfig !== undefined ? normalizeOptionalString(creds.kubeconfig) : stored.kubeconfig,
   };
 
   if (creds.password !== undefined) {
@@ -478,8 +466,6 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
   existing.host = nextCreds.host;
   existing.port = nextCreds.port;
   existing.username = nextCreds.username;
-  existing.kubectlPath = nextCreds.kubectlPath;
-  existing.kubeconfig = nextCreds.kubeconfig;
   existing.lastUsedAt = Date.now();
   (existing as any)._creds = nextCreds;
 
@@ -513,8 +499,6 @@ export function disconnectSession(sessionId: string): boolean {
   if (session.type === "ssh" && session.client) {
     try { session.client.end(); } catch {}
     session.client = undefined;
-  } else if (session.type === "k8s" && session.kubeconfigPath) {
-    try { fs.unlinkSync(session.kubeconfigPath); } catch {}
   }
 
   // Keep the entry in metadata so it survives restart (allows reconnect)
@@ -524,10 +508,11 @@ export function disconnectSession(sessionId: string): boolean {
 
 export function listSessions(): Omit<Session, "client">[] {
   const result: Array<Omit<Session, "client"> & {
-    authType?: "password" | "privateKey" | "k8s";
+    authType?: "password" | "privateKey";
     hasPassword?: boolean;
     hasPrivateKey?: boolean;
     idleTimeoutMs: number;
+    connected: boolean;
   }> = [];
   for (const session of sessions.values()) {
     const stored = getStoredCredentials(session);
@@ -540,13 +525,11 @@ export function listSessions(): Omit<Session, "client">[] {
       username: session.username,
       createdAt: session.createdAt,
       lastUsedAt: session.lastUsedAt,
-      kubectlPath: session.kubectlPath,
-      kubeconfig: session.kubeconfig,
-      kubeconfigPath: session.kubeconfigPath,
       idleTimeoutMs: SESSION_IDLE_TIMEOUT_MS,
-      authType: session.type === "k8s" ? "k8s" : stored?.privateKey ? "privateKey" : stored?.password ? "password" : undefined,
+      authType: stored?.privateKey ? "privateKey" : stored?.password ? "password" : undefined,
       hasPassword: Boolean(stored?.password),
       hasPrivateKey: Boolean(stored?.privateKey),
+      connected: Boolean(session.client),
     });
   }
   return result;
@@ -560,8 +543,25 @@ export async function resolveClient(
   if (args.sessionId) {
     const session = getSession(args.sessionId);
     if (!session) throw new Error(`Session '${args.sessionId}' not found or expired`);
-    if (session.type !== "ssh" || !session.client) {
+    if (session.type !== "ssh") {
       throw new Error(`Session '${args.sessionId}' is not an SSH session`);
+    }
+    if (!session.client) {
+      const stored = getStoredCredentials(session);
+      if (stored && (stored.password || stored.privateKey)) {
+        console.error(`[session] Attempting auto-reconnect for session ${session.id}...`);
+        try {
+          const timeout = args.timeout ?? 15000;
+          const client = await sshConnect(stored, timeout);
+          session.client = client;
+          registerClientListeners(session.id, client);
+          console.error(`[session] Auto-reconnected session ${session.id} successfully.`);
+        } catch (err: any) {
+          throw new Error(`Session '${args.sessionId}' is disconnected and auto-reconnect failed: ${err.message}`);
+        }
+      } else {
+        throw new Error(`Session '${args.sessionId}' is disconnected and no credentials are available`);
+      }
     }
     return fn(session.client);
   }

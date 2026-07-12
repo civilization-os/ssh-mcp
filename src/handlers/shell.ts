@@ -197,9 +197,27 @@ export function hasActiveShells(sessionId: string): boolean {
 // --- Handlers ---
 
 export async function handleShellCreate(args: SshShellArgs) {
-  const session = getSession(args.sessionId);
-  if (!session || session.type !== "ssh" || !session.client) {
-    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found or is not an SSH session` }], isError: true };
+  let session = getSession(args.sessionId);
+  if (!session || session.type !== "ssh") {
+    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found` }], isError: true };
+  }
+
+  // Attempt auto-reconnect if client is not connected
+  if (!session.client) {
+    console.error(`[shell] Session client not connected. Attempting auto-reconnect...`);
+    try {
+      const { resolveClient } = await import("../session.js");
+      await resolveClient({ sessionId: args.sessionId }, async () => {});
+      // Refresh session object reference
+      const refreshed = getSession(args.sessionId);
+      if (refreshed) session = refreshed;
+    } catch (err: any) {
+      return { content: [{ type: "text" as const, text: `Error: Session is disconnected and auto-reconnect failed: ${err.message}` }], isError: true };
+    }
+  }
+
+  if (!session.client) {
+    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' is disconnected` }], isError: true };
   }
 
   // Enforce maximum concurrent shells limit

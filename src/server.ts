@@ -120,9 +120,7 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
             label: session.label,
             host: session.host,
             port: session.port,
-            username: session.username,
-            kubectlPath: session.kubectlPath,
-            kubeconfig: session.kubeconfig
+            username: session.username
           }));
         } catch (err: any) {
           res.writeHead(400, { "Content-Type": "text/plain" });
@@ -420,80 +418,7 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
 
     // ======== Kubernetes REST Routes ========
 
-    const k8sPodsMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/k8s\/pods$/);
-    if (k8sPodsMatch && req.method === "GET") {
-      const sessionId = k8sPodsMatch[1];
-      const namespace = url.searchParams.get("namespace") || "";
-      try {
-        const { handleK8sListPods } = await import("./handlers/k8s.js");
-        const result = await handleK8sListPods({ sessionId, namespace });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (err: any) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ isError: true, error: err.message }));
-      }
-      return;
-    }
 
-    const k8sLogsMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/k8s\/logs$/);
-    if (k8sLogsMatch && req.method === "GET") {
-      const sessionId = k8sLogsMatch[1];
-      const namespace = url.searchParams.get("namespace") || "default";
-      const pod = url.searchParams.get("pod") || "";
-      const container = url.searchParams.get("container") || "";
-      const tail = parseInt(url.searchParams.get("tail") || "100", 10);
-      try {
-        const { handleK8sPodLogs } = await import("./handlers/k8s.js");
-        const result = await handleK8sPodLogs({ sessionId, namespace, pod, container, tail });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (err: any) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ isError: true, error: err.message }));
-      }
-      return;
-    }
-
-    const k8sExecMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/k8s\/exec$/);
-    if (k8sExecMatch && req.method === "POST") {
-      const sessionId = k8sExecMatch[1];
-      let body = "";
-      req.on("data", chunk => body += chunk);
-      req.on("end", async () => {
-        try {
-          const args = JSON.parse(body);
-          const { handleK8sPodExec } = await import("./handlers/k8s.js");
-          const result = await handleK8sPodExec({ sessionId, ...args });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } catch (e: any) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ isError: true, error: e.message }));
-        }
-      });
-      return;
-    }
-
-    const k8sArthasMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/k8s\/arthas$/);
-    if (k8sArthasMatch && req.method === "POST") {
-      const sessionId = k8sArthasMatch[1];
-      let body = "";
-      req.on("data", chunk => body += chunk);
-      req.on("end", async () => {
-        try {
-          const args = JSON.parse(body);
-          const { handleK8sArthasAttach } = await import("./handlers/k8s.js");
-          const result = await handleK8sArthasAttach({ sessionId, ...args });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } catch (e: any) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ isError: true, error: e.message }));
-        }
-      });
-      return;
-    }
 
     // ======== System Monitoring REST Routes ========
     const sysinfoMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/sysinfo$/);
