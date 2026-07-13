@@ -3,6 +3,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import net from "net";
+import { exec } from "child_process";
 import { WebSocket, createWebSocketStream } from "ws";
 import {
   CallToolRequestSchema,
@@ -23,6 +24,7 @@ import {
   disconnectSession,
   listSessions,
   loadAndReconnectSessions,
+  reconnectSessionById,
 } from "./session.js";
 import {
   handleReadFile,
@@ -91,9 +93,11 @@ const authFields = {
 // --- Server ---
 
 const server = new Server(
-  { name: "ssh-mcp", version: "2.0.0" },
+  { name: "ssh-mcp", version: "2.1.0" },
   { capabilities: { tools: {}, resources: { subscribe: true } } }
 );
+
+let globalHttpPort = 12222;
 
 // --- Resource definitions ---
 
@@ -225,14 +229,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ======== Session Management ========
     {
       name: "ssh_connect",
-      description: "Create a persistent SSH session. Returns a sessionId that can be reused by other tools.",
+      description: "Create a persistent SSH session or reconnect to an existing one. To reconnect seamlessly, simply pass ONLY the 'sessionId' (credentials will be automatically restored from the saved session). Returns a sessionId that can be reused by other tools.",
       inputSchema: {
         type: "object",
         properties: {
           name: { type: "string", description: "Optional label for the session" },
+          sessionId: { type: "string", description: "Optional session ID to reconnect an existing session directly. If provided, host and credentials are not needed." },
           ...authFields,
         },
-        required: ["host"],
       },
     },
     {
@@ -249,6 +253,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "ssh_sessions",
       description: "List all active SSH sessions.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "ssh_web_start",
+      description: "Open the built-in Web Dashboard UI in the user's default browser.",
       inputSchema: { type: "object", properties: {} },
     },
 
@@ -497,9 +506,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Session Management
       case "ssh_connect": {
         if (!validateSshConnectArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "host is required");
+          throw new McpError(ErrorCode.InvalidParams, "Either host or sessionId is required");
         }
-        const session = await createSession(args, args.name);
+        
+        let session;
+        if (args.sessionId) {
+          session = await reconnectSessionById(args.sessionId);
+        } else {
+          session = await createSession(args, args.name);
+        }
+        
         return {
           content: [{
             type: "text",
@@ -539,6 +555,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           return `  ${s.id}  ${s.label}  ${s.username}@${s.host}:${s.port}  (${alive}s)`;
         });
         return { content: [{ type: "text", text: `Active sessions (${sessions.length}):\n${lines.join("\n")}` }] };
+      }
+
+      case "ssh_web_start": {
+        const url = `http://localhost:${globalHttpPort}`;
+        const platform = process.platform;
+        let command = "";
+        if (platform === "win32") {
+          command = `start "" "${url}"`;
+        } else if (platform === "darwin") {
+          command = `open "${url}"`;
+        } else {
+          command = `xdg-open "${url}"`;
+        }
+        
+        const result = await new Promise((resolve) => {
+          exec(command, (error) => {
+            if (error) {
+              resolve({
+                content: [{ type: "text", text: `Failed to open browser: ${error.message}` }],
+                isError: true,
+              });
+            } else {
+              resolve({
+                content: [{ type: "text", text: `Successfully opened Web Dashboard at ${url}` }],
+              });
+            }
+          });
+        });
+        return result as any;
       }
 
 
@@ -679,6 +724,7 @@ async function main() {
 
   // Start or reuse the browser console service for this machine.
   const httpServer = await startHttpServer(port);
+  globalHttpPort = httpServer.port;
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

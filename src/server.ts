@@ -1,4 +1,5 @@
 import http from "http";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import sirv from "sirv";
@@ -14,7 +15,8 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // UI assets are located in the sibling 'ui/dist' folder relative to 'build/'
 const uiDistPath = path.resolve(__dirname, "..", "ui", "dist");
-const serve = sirv(uiDistPath, { dev: false, single: true });
+// dev: true forces sirv to always read from disk instead of caching in RAM
+const serve = sirv(uiDistPath, { dev: true, single: true });
 
 export interface HttpServerStartResult {
   port: number;
@@ -22,31 +24,59 @@ export interface HttpServerStartResult {
   server?: http.Server;
 }
 
-async function isExistingSshMcpServer(port: number): Promise<boolean> {
+let SERVER_VERSION = "2.1.1";
+try {
+  const pkgPath = path.join(__dirname, "..", "package.json");
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+  SERVER_VERSION = pkg.version;
+} catch {}
+
+async function checkExistingServer(port: number): Promise<{ exists: boolean, version?: string }> {
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/sessions`);
-    if (!response.ok) return false;
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) return false;
-    const payload = await response.json();
-    return Array.isArray(payload);
+    const response = await fetch(`http://127.0.0.1:${port}/api/version`);
+    if (response.ok) {
+      const data = await response.json();
+      return { exists: true, version: data.version };
+    }
+    const fallback = await fetch(`http://127.0.0.1:${port}/api/sessions`);
+    if (fallback.ok) {
+      return { exists: true, version: "1.0.0" }; // fallback for older versions
+    }
   } catch {
-    return false;
+    return { exists: false };
   }
+  return { exists: false };
 }
 
 export async function startHttpServer(initialPort: number = 12222): Promise<HttpServerStartResult> {
   const maxRetries = 10;
+  let currentPort = initialPort;
 
   for (let offset = 0; offset <= maxRetries; offset++) {
     const port = initialPort + offset;
-    if (await isExistingSshMcpServer(port)) {
-      console.error(`[REST/WebSocket Server] Reusing existing ssh-mcp UI at http://127.0.0.1:${port}`);
-      return { port, reused: true };
+    const check = await checkExistingServer(port);
+    if (check.exists) {
+      if (check.version && check.version !== SERVER_VERSION) {
+        console.error(`[REST/WebSocket Server] Found older ssh-mcp UI (v${check.version}) on port ${port}. Requesting shutdown to take over...`);
+        try {
+          await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: "POST" });
+          await new Promise(r => setTimeout(r, 1000));
+          currentPort = port;
+          break; // successfully told it to shut down, try binding here
+        } catch (e) {
+          console.error(`[REST/WebSocket Server] Failed to shutdown older server:`, e);
+          continue; // continue to next port
+        }
+      } else {
+        console.error(`[REST/WebSocket Server] Reusing existing ssh-mcp UI (v${check.version}) at http://127.0.0.1:${port}`);
+        return { port, reused: true };
+      }
+    } else {
+      currentPort = port;
+      break;
     }
   }
 
-  let currentPort = initialPort;
   let retryCount = 0;
 
   const server = http.createServer(async (req, res) => {
@@ -64,6 +94,21 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
     }
 
     const url = new URL(req.url || "", `http://localhost:${currentPort}`);
+
+    if (url.pathname === "/api/version" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ version: SERVER_VERSION }));
+      return;
+    }
+
+    if (url.pathname === "/api/shutdown" && req.method === "POST") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true }));
+      console.error(`[REST/WebSocket Server] Received shutdown request from newer instance. Releasing port ${currentPort}...`);
+      server.close();
+      server.closeAllConnections?.();
+      return;
+    }
 
     if (url.pathname === "/api/sessions" && req.method === "GET") {
       const sessions = listSessions();
@@ -527,7 +572,8 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
     server.on("error", async (err: any) => {
       if (err.code === "EADDRINUSE" && retryCount < maxRetries) {
         const occupiedPort = currentPort;
-        if (await isExistingSshMcpServer(occupiedPort)) {
+        const check = await checkExistingServer(occupiedPort);
+        if (check.exists && check.version === SERVER_VERSION) {
           console.error(`[REST/WebSocket Server] Reusing existing ssh-mcp UI at http://127.0.0.1:${occupiedPort}`);
           resolve({ port: occupiedPort, reused: true });
           return;

@@ -50,7 +50,8 @@ function SessionItem({
   onSelect, 
   onEdit, 
   onDelete, 
-  lang 
+  lang,
+  pingMs 
 }: { 
   sess: SshSession; 
   isSelected: boolean; 
@@ -58,6 +59,7 @@ function SessionItem({
   onEdit: () => void; 
   onDelete: () => void;
   lang: Language;
+  pingMs?: number | null;
 }) {
   return (
     <div
@@ -114,7 +116,7 @@ function SessionItem({
           display: "inline-block"
         }} />
         <span style={{ fontWeight: 500, color: sess.connected ? "hsl(var(--foreground))" : "hsl(var(--destructive))" }}>
-          {sess.connected ? translations[lang].heartbeatActive : (lang === "zh" ? "已断开" : "Disconnected")}
+          {sess.connected ? translations[lang].heartbeatActive + (pingMs != null ? ` (${pingMs}ms)` : "") : (lang === "zh" ? "已断开" : "Disconnected")}
         </span>
       </div>
     </div>
@@ -124,6 +126,8 @@ function SessionItem({
 export default function App() {
   const [sessions, setSessions] = useState<SshSession[]>([]);
   const [shells, setShells] = useState<ShellSession[]>([]);
+  const [pingMs, setPingMs] = useState<number | null>(null);
+  const [serverVersion, setServerVersion] = useState<string>("2.1.0");
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [activeShellId, setActiveShellId] = useState<string>("");
   
@@ -193,9 +197,18 @@ export default function App() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        const start = performance.now();
         const sRes = await fetch(`${API_BASE}/api/sessions`);
         const sData = await sRes.json();
+        const latency = Math.round(performance.now() - start);
+        setPingMs(latency);
         setSessions(sData);
+
+        const vRes = await fetch(`${API_BASE}/api/version`).catch(() => null);
+        if (vRes?.ok) {
+          const vData = await vRes.json();
+          if (vData.version) setServerVersion(vData.version);
+        }
 
         const shRes = await fetch(`${API_BASE}/api/shells`);
         const shData = await shRes.json();
@@ -533,6 +546,7 @@ export default function App() {
                 sess={sess}
                 isSelected={selectedSessionId === sess.id}
                 lang={lang}
+                pingMs={pingMs}
                 onSelect={() => {
                   setSelectedSessionId(sess.id);
                   if (activeShellId && shells.find(s => s.id === activeShellId)?.sessionId !== sess.id) {
@@ -628,6 +642,19 @@ export default function App() {
               )}
             </div>
           )}
+
+          {/* Version Footer inside scrollable area */}
+          <div style={{ 
+            marginTop: "24px",
+            paddingTop: "12px",
+            borderTop: "1px solid hsl(var(--border))",
+            fontSize: "11px",
+            color: "hsl(var(--muted-foreground))",
+            textAlign: "center",
+            fontFamily: "monospace"
+          }}>
+            ssh-mcp v{serverVersion}
+          </div>
           </div>
         </div>
       </div>

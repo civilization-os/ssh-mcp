@@ -334,6 +334,26 @@ export function sshConnect(creds: Partial<SshCredentials>, timeoutMs: number): P
 }
 
 export async function createSession(creds: Partial<SshCredentials>, label?: string): Promise<Session> {
+  // If no explicit credentials provided, try to auto-fill from saved sessions
+  if (!creds.password && !creds.privateKey) {
+    for (const s of sessions.values()) {
+      if (s.type === "ssh" && s.host === (creds.host ?? "localhost")) {
+        if (creds.port && s.port !== creds.port) continue;
+        if (creds.username && s.username !== creds.username) continue;
+        
+        const stored = (s as any)._creds;
+        if (stored && (stored.password || stored.privateKey)) {
+          creds.password = stored.password;
+          creds.privateKey = stored.privateKey;
+          creds.passphrase = stored.passphrase;
+          if (!creds.username) creds.username = stored.username;
+          if (!creds.port) creds.port = stored.port;
+          break;
+        }
+      }
+    }
+  }
+
   const targetHost = creds.host ?? "localhost";
   const targetPort = creds.port ?? 22;
   const targetUsername = creds.username ?? "root";
@@ -473,6 +493,25 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
   registerClientListeners(sessionId, client);
   saveSessionMeta();
   return existing;
+}
+
+export async function reconnectSessionById(sessionId: string): Promise<Session> {
+  const existing = sessions.get(sessionId);
+  if (!existing || existing.type !== "ssh") {
+    throw new Error(`SSH Session '${sessionId}' not found`);
+  }
+  
+  const stored = (existing as any)._creds;
+  const creds: Partial<SshCredentials> = {
+    host: existing.host,
+    port: existing.port,
+    username: existing.username,
+    password: stored?.password,
+    privateKey: stored?.privateKey,
+    passphrase: stored?.passphrase,
+  };
+  
+  return await createSession(creds, existing.label);
 }
 
 export function touchSession(sessionId: string): boolean {

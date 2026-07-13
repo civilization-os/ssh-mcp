@@ -1,6 +1,6 @@
 {
   "name": "ssh-mcp",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "MCP server for SSH remote execution",
   "type": "module",
   "main": "build/index.js",
@@ -8,7 +8,7 @@
     "ssh-mcp": "build/index.js"
   },
   "scripts": {
-    "build": "npm run build:ui && tsc",
+    "build": "node -e \"fs.rmSync('build', { recursive: true, force: true })\" && npm run build:ui && tsc",
     "build:ui": "cd ui && npm install && npm run build",
     "start": "node build/index.js",
     "dev": "tsc --watch",

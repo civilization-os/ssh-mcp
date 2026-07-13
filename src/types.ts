@@ -28,8 +28,9 @@ export interface Session {
 
 // --- Tool argument types ---
 
-export interface SshConnectArgs extends SshCredentials {
+export interface SshConnectArgs extends Partial<SshCredentials> {
   name?: string;
+  sessionId?: string;
 }
 
 export interface SshDisconnectArgs {
@@ -236,7 +237,7 @@ export function extractSessionId(args: Record<string, unknown>): string | undefi
 }
 
 export function validateSshConnectArgs(args: unknown): args is SshConnectArgs {
-  return isRecord(args) && typeof args.host === "string";
+  return isRecord(args) && (typeof args.host === "string" || typeof args.sessionId === "string");
 }
 
 export function validateSshDisconnectArgs(args: unknown): args is SshDisconnectArgs {
