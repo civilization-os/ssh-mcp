@@ -69,8 +69,10 @@ function SessionItem({
         padding: "12px",
         marginBottom: "8px",
         cursor: "pointer",
-        backgroundColor: isSelected ? "hsl(var(--accent))" : "transparent",
-        borderColor: isSelected ? "hsl(var(--ring))" : "hsl(var(--border))",
+        backgroundColor: isSelected ? "hsl(var(--accent))" : "hsl(var(--card))",
+        borderColor: "hsl(var(--border))",
+        boxShadow: isSelected ? "0 1px 3px rgba(0,0,0,0.05)" : "none",
+        position: "relative"
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>
@@ -601,7 +603,7 @@ export default function App() {
                       marginBottom: "6px",
                       cursor: "pointer",
                       backgroundColor: activeShellId === sh.id ? "hsl(var(--accent))" : "transparent",
-                      borderColor: activeShellId === sh.id ? "hsl(var(--ring))" : "hsl(var(--border))",
+                      borderColor: "hsl(var(--border))",
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center"
