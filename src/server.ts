@@ -110,6 +110,57 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
       return;
     }
 
+    // ======== MCP Proxy Routes ========
+    if (url.pathname === "/api/mcp/tool" && req.method === "POST") {
+      let body = "";
+      req.on("data", chunk => { body += chunk; });
+      req.on("end", async () => {
+        try {
+          const { name, args } = JSON.parse(body);
+          const { handleMcpToolCall } = await import("./handlers/mcp.js");
+          const result = await handleMcpToolCall(name, args, currentPort);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ isError: true, error: err.message }));
+        }
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/mcp/resources" && req.method === "GET") {
+      try {
+        const { handleMcpListResources } = await import("./handlers/mcp.js");
+        const result = await handleMcpListResources();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ isError: true, error: err.message }));
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/mcp/resource" && req.method === "GET") {
+      const uri = url.searchParams.get("uri");
+      if (!uri) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ isError: true, error: "Missing uri parameter" }));
+        return;
+      }
+      try {
+        const { handleMcpReadResource } = await import("./handlers/mcp.js");
+        const result = await handleMcpReadResource(uri);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ isError: true, error: err.message }));
+      }
+      return;
+    }
+
     if (url.pathname === "/api/sessions" && req.method === "GET") {
       const sessions = listSessions();
       try {
@@ -556,12 +607,39 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
     });
   });
 
+  const mcpWss = new WebSocketServer({ noServer: true });
+  mcpWss.on("connection", (ws: WebSocket) => {
+    console.log("[WebSocket] MCP Proxy connected for events");
+    ws.on("error", console.error);
+  });
+
+  // Listen for shell data events and broadcast to all connected proxies
+  try {
+    import("./handlers/shell.js").then(({ shellEvents }) => {
+      shellEvents.on("data", (shellId: string) => {
+        const uri = `mcp://ssh/shell/${shellId}/output`;
+        const msg = JSON.stringify({ type: "resourceUpdated", uri });
+        for (const client of mcpWss.clients) {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(msg);
+          }
+        }
+      });
+    }).catch(console.error);
+  } catch (err) {
+    console.error("[WebSocket] Failed to bind shell events to MCP events:", err);
+  }
+
   // Upgrade HTTP connections to WebSocket
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "", `http://localhost:${currentPort}`);
     if (url.pathname === "/ws/shell") {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);
+      });
+    } else if (url.pathname === "/ws/mcp-events") {
+      mcpWss.handleUpgrade(request, socket, head, (ws) => {
+        mcpWss.emit("connection", ws, request);
       });
     } else {
       socket.destroy();

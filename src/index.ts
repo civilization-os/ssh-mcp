@@ -2,9 +2,8 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import net from "net";
-import { exec } from "child_process";
-import { WebSocket, createWebSocketStream } from "ws";
+import { spawn } from "child_process";
+import { WebSocket } from "ws";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -18,88 +17,55 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 
-import {
-  createSession,
-  disconnectSession,
-  listSessions,
-  loadAndReconnectSessions,
-  reconnectSessionById,
-} from "./session.js";
-import {
-  handleReadFile,
-  handleWriteFile,
-  handleListDir,
-  handleDelete,
-  handleRename,
-  handleMkdir,
-  handleChmod,
-  handleStat,
-} from "./handlers/sftp.js";
-import {
-  handleSysinfo,
-  handleProcesses,
-  handleDiskUsage,
-} from "./handlers/system.js";
-
-import {
-  handleShellCreate,
-  handleShellWrite,
-  handleShellRead,
-  handleShellResize,
-  handleShellClose,
-  handleShellList,
-  cleanShellsBySession,
-  shellEvents,
-} from "./handlers/shell.js";
-import { startHttpServer } from "./server.js";
-import {
-  validateSshConnectArgs,
-  validateSshDisconnectArgs,
-  validateSshFileReadArgs,
-  validateSshFileWriteArgs,
-  validateSshFileListArgs,
-  validateSshFileDeleteArgs,
-  validateSshFileRenameArgs,
-  validateSshFileMkdirArgs,
-  validateSshFileChmodArgs,
-  validateSshFileStatArgs,
-  validateSshSysinfoArgs,
-  validateSshProcessesArgs,
-  validateSshDiskUsageArgs,
-  validateSshShellArgs,
-  validateSshShellWriteArgs,
-  validateSshShellReadArgs,
-  validateSshShellResizeArgs,
-  validateSshShellCloseArgs,
-  extractCredentials,
-  extractSessionId,
-} from "./types.js";
-
-// --- Auth fields shared across tools ---
-
-const authFields = {
-  host: { type: "string" as const, description: "Remote server hostname or IP address" },
-  port: { type: "number" as const, description: "SSH port (default: 22)", default: 22 },
-  username: { type: "string" as const, description: "SSH username (default: root)", default: "root" },
-  password: { type: "string" as const, description: "SSH password (use either password or privateKey)" },
-  privateKey: { type: "string" as const, description: "SSH private key content as string" },
-  passphrase: { type: "string" as const, description: "Passphrase for the private key" },
-  timeout: { type: "number" as const, description: "Operation timeout in milliseconds (default: 30000)", default: 30000 },
-};
-
-
-
-// --- Server ---
+const DAEMON_PORT = 12222;
+const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 
 const server = new Server(
-  { name: "ssh-mcp", version: "2.1.0" },
+  { name: "ssh-mcp", version: "2.2.0" },
   { capabilities: { tools: {}, resources: { subscribe: true } } }
 );
 
-let globalHttpPort = 12222;
+async function ensureDaemonRunning() {
+  try {
+    const res = await fetch(`${DAEMON_URL}/api/version`);
+    if (res.ok) return true;
+  } catch {}
 
-// --- Resource definitions ---
+  console.error(`[MCP Proxy] Daemon not running on port ${DAEMON_PORT}. Attempting to start...`);
+  
+  const selfPath = process.argv[1]
+    ? path.resolve(process.argv[1])
+    : path.join(path.dirname(fileURLToPath(import.meta.url)), "index.js");
+  const daemonPath = path.join(path.dirname(selfPath), "daemon.js");
+  
+  if (!fs.existsSync(daemonPath)) {
+    console.error(`[MCP Proxy] Daemon script not found at ${daemonPath}`);
+    return false;
+  }
+
+  const child = spawn(process.execPath, [daemonPath], {
+    detached: true,
+    stdio: "ignore",
+    env: process.env
+  });
+  
+  child.unref();
+
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      if ((await fetch(`${DAEMON_URL}/api/version`)).ok) {
+        console.error(`[MCP Proxy] Daemon successfully started.`);
+        return true;
+      }
+    } catch {}
+  }
+  
+  console.error(`[MCP Proxy] Failed to start daemon.`);
+  return false;
+}
 
 server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
   return {
@@ -115,83 +81,24 @@ server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
 });
 
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
-  const { listActiveShells } = await import("./handlers/shell.js");
-  const shells = listActiveShells();
-  
-  const resources = [
-    {
-      uri: "mcp://ssh/sessions",
-      name: "Active SSH Sessions",
-      description: "List of all persistent SSH sessions managed by this server",
-      mimeType: "application/json",
-    },
-    {
-      uri: "mcp://ssh/shells",
-      name: "Active Interactive Shells",
-      description: "List of all active PTY shell sessions and their status",
-      mimeType: "application/json",
-    }
-  ];
-
-  shells.forEach(s => {
-    resources.push({
-      uri: `mcp://ssh/shell/${s.id}/output`,
-      name: `Shell Output (${s.id})`,
-      description: `Output stream for shell ${s.id} (Session: ${s.sessionId})`,
-      mimeType: "application/json",
-    });
-  });
-  
-  return { resources };
+  try {
+    const res = await fetch(`${DAEMON_URL}/api/mcp/resources`);
+    if (!res.ok) throw new Error("Daemon error");
+    return await res.json() as any;
+  } catch (err: any) {
+    throw new McpError(ErrorCode.InternalError, `Failed to list resources: ${err.message}`);
+  }
 });
 
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  const uri = request.params.uri;
-
-  if (uri === "mcp://ssh/sessions") {
-    const sessions = listSessions();
-    return {
-      contents: [{
-        uri,
-        mimeType: "application/json",
-        text: JSON.stringify(sessions, null, 2),
-      }],
-    };
+  try {
+    const res = await fetch(`${DAEMON_URL}/api/mcp/resource?uri=${encodeURIComponent(request.params.uri)}`);
+    if (!res.ok) throw new Error("Daemon error");
+    return await res.json() as any;
+  } catch (err: any) {
+    throw new McpError(ErrorCode.InternalError, `Failed to read resource: ${err.message}`);
   }
-
-  if (uri === "mcp://ssh/shells") {
-    const { listActiveShells } = await import("./handlers/shell.js");
-    const shells = listActiveShells();
-    return {
-      contents: [{
-        uri,
-        mimeType: "application/json",
-        text: JSON.stringify(shells, null, 2),
-      }],
-    };
-  }
-
-  const match = uri.match(/^mcp:\/\/ssh\/shell\/([^/]+)\/output$/);
-  if (!match) {
-    throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
-  }
-  
-  const shellId = match[1];
-  const result = await handleShellRead({ shellId, peek: true } as any);
-  
-  // result.content[0].text contains a JSON string of the shell status and output
-  return {
-    contents: [
-      {
-        uri,
-        mimeType: "application/json",
-        text: (result as any).content[0].text,
-      }
-    ],
-  };
 });
-
-// --- Subscription management ---
 
 const activeSubscriptions = new Set<string>();
 
@@ -205,28 +112,46 @@ server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
   return {};
 });
 
-// Listen for shell data events and notify subscribers
-shellEvents.on("data", (shellId: string) => {
-  const uri = `mcp://ssh/shell/${shellId}/output`;
-  if (activeSubscriptions.has(uri)) {
-    server.notification({
-      method: "notifications/resources/updated",
-      params: { uri },
-    });
-  }
-});
+function connectDaemonEvents() {
+  const ws = new WebSocket(`ws://127.0.0.1:${DAEMON_PORT}/ws/mcp-events`);
+  
+  ws.on("open", () => {
+    // connected
+  });
 
-// Clean up subscriptions when shell is closed/destroyed
-shellEvents.on("close", (shellId: string) => {
-  const uri = `mcp://ssh/shell/${shellId}/output`;
-  activeSubscriptions.delete(uri);
-});
+  ws.on("message", (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === "resourceUpdated" && activeSubscriptions.has(msg.uri)) {
+        server.notification({
+          method: "notifications/resources/updated",
+          params: { uri: msg.uri },
+        });
+      }
+    } catch (e) {}
+  });
 
-// --- Tool definitions ---
+  ws.on("close", () => {
+    setTimeout(connectDaemonEvents, 2000);
+  });
+  
+  ws.on("error", () => {
+    // ignore
+  });
+}
+
+const authFields = {
+  host: { type: "string" as const, description: "Remote server hostname or IP address" },
+  port: { type: "number" as const, description: "SSH port (default: 22)", default: 22 },
+  username: { type: "string" as const, description: "SSH username (default: root)", default: "root" },
+  password: { type: "string" as const, description: "SSH password (use either password or privateKey)" },
+  privateKey: { type: "string" as const, description: "SSH private key content as string" },
+  passphrase: { type: "string" as const, description: "Passphrase for the private key" },
+  timeout: { type: "number" as const, description: "Operation timeout in milliseconds (default: 30000)", default: 30000 },
+};
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    // ======== Session Management ========
     {
       name: "ssh_connect",
       description: "Create a persistent SSH session or reconnect to an existing one. To reconnect seamlessly, simply pass ONLY the 'sessionId' (credentials will be automatically restored from the saved session). Returns a sessionId that can be reused by other tools.",
@@ -260,10 +185,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Open the built-in Web Dashboard UI in the user's default browser.",
       inputSchema: { type: "object", properties: {} },
     },
-
-
-
-    // ======== SFTP File Operations ========
     {
       name: "ssh_file_read",
       description: "Read the contents of a file on a remote server via SFTP.",
@@ -375,8 +296,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["path"],
       },
     },
-
-    // ======== System Monitoring ========
     {
       name: "ssh_sysinfo",
       description: "Display system information: OS, kernel, CPU, memory, disk, uptime, load average.",
@@ -413,8 +332,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
-
-    // ======== Interactive Shell (PTY) ========
     {
       name: "ssh_shell",
       description: "Create an interactive PTY shell session on a remote server. Returns a shellId. RECOMMENDATION: For real-time monitoring and high-frequency output, SUBSCRIBE to the resource 'mcp://ssh/shell/{shellId}/output' instead of polling ssh_shell_read.",
@@ -491,273 +408,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "List all active interactive shell sessions.",
       inputSchema: { type: "object", properties: {} },
     },
-
-
   ],
 }));
 
-// --- Request handler ---
-
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-
   try {
-    switch (name) {
-      // Session Management
-      case "ssh_connect": {
-        if (!validateSshConnectArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "Either host or sessionId is required");
-        }
-        
-        let session;
-        if (args.sessionId) {
-          session = await reconnectSessionById(args.sessionId);
-        } else {
-          session = await createSession(args, args.name);
-        }
-        
-        return {
-          content: [{
-            type: "text",
-            text: [
-              `Session created: ${session.id}`,
-              `  Label: ${session.label}`,
-              `  Host:  ${session.host}:${session.port}`,
-              `  User:  ${session.username}`,
-            ].join("\n"),
-          }],
-        };
-      }
-
-
-
-      case "ssh_disconnect": {
-        if (!validateSshDisconnectArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "sessionId is required");
-        }
-        cleanShellsBySession(args.sessionId);
-        const ok = disconnectSession(args.sessionId);
-        return {
-          content: [{
-            type: "text",
-            text: ok ? `Session ${args.sessionId} disconnected` : `Session ${args.sessionId} not found`,
-          }],
-        };
-      }
-
-      case "ssh_sessions": {
-        const sessions = listSessions();
-        if (sessions.length === 0) {
-          return { content: [{ type: "text", text: "No active sessions" }] };
-        }
-        const lines = sessions.map(s => {
-          const alive = Math.floor((Date.now() - s.createdAt) / 1000);
-          return `  ${s.id}  ${s.label}  ${s.username}@${s.host}:${s.port}  (${alive}s)`;
-        });
-        return { content: [{ type: "text", text: `Active sessions (${sessions.length}):\n${lines.join("\n")}` }] };
-      }
-
-      case "ssh_web_start": {
-        const url = `http://localhost:${globalHttpPort}`;
-        const platform = process.platform;
-        let command = "";
-        if (platform === "win32") {
-          command = `start "" "${url}"`;
-        } else if (platform === "darwin") {
-          command = `open "${url}"`;
-        } else {
-          command = `xdg-open "${url}"`;
-        }
-        
-        const result = await new Promise((resolve) => {
-          exec(command, (error) => {
-            if (error) {
-              resolve({
-                content: [{ type: "text", text: `Failed to open browser: ${error.message}` }],
-                isError: true,
-              });
-            } else {
-              resolve({
-                content: [{ type: "text", text: `Successfully opened Web Dashboard at ${url}` }],
-              });
-            }
-          });
-        });
-        return result as any;
-      }
-
-
-
-      // SFTP
-      case "ssh_file_read": {
-        if (!validateSshFileReadArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "path is required");
-        }
-        return await handleReadFile(args);
-      }
-
-      case "ssh_file_write": {
-        if (!validateSshFileWriteArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "path and content are required");
-        }
-        return await handleWriteFile(args);
-      }
-
-      case "ssh_file_list": {
-        if (!validateSshFileListArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "path is required");
-        }
-        return await handleListDir(args);
-      }
-
-      case "ssh_file_delete": {
-        if (!validateSshFileDeleteArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "path is required");
-        }
-        return await handleDelete(args);
-      }
-
-      case "ssh_file_rename": {
-        if (!validateSshFileRenameArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "source and dest are required");
-        }
-        return await handleRename(args);
-      }
-
-      case "ssh_file_mkdir": {
-        if (!validateSshFileMkdirArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "path is required");
-        }
-        return await handleMkdir(args);
-      }
-
-      case "ssh_file_chmod": {
-        if (!validateSshFileChmodArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "path and mode are required");
-        }
-        return await handleChmod(args);
-      }
-
-      case "ssh_file_stat": {
-        if (!validateSshFileStatArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "path is required");
-        }
-        return await handleStat(args);
-      }
-
-      // System
-      case "ssh_sysinfo": {
-        if (!validateSshSysinfoArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "invalid arguments");
-        }
-        return await handleSysinfo(args);
-      }
-
-      case "ssh_processes": {
-        if (!validateSshProcessesArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "invalid arguments");
-        }
-        return await handleProcesses(args);
-      }
-
-      case "ssh_disk_usage": {
-        if (!validateSshDiskUsageArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "invalid arguments");
-        }
-        return await handleDiskUsage(args);
-      }
-
-
-
-      // Interactive Shell
-      case "ssh_shell": {
-        if (!validateSshShellArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "sessionId is required");
-        }
-        return await handleShellCreate(args);
-      }
-
-      case "ssh_shell_write": {
-        if (!validateSshShellWriteArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "shellId and input are required");
-        }
-        return await handleShellWrite(args);
-      }
-
-      case "ssh_shell_read": {
-        if (!validateSshShellReadArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "shellId is required");
-        }
-        return await handleShellRead(args);
-      }
-
-      case "ssh_shell_resize": {
-        if (!validateSshShellResizeArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "shellId is required");
-        }
-        return await handleShellResize(args);
-      }
-
-      case "ssh_shell_close": {
-        if (!validateSshShellCloseArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "shellId is required");
-        }
-        return await handleShellClose(args);
-      }
-
-      case "ssh_shell_list": {
-        return await handleShellList();
-      }
-
-      default:
-        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
-    }
-  } catch (error) {
-    if (error instanceof McpError) throw error;
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+    const res = await fetch(`${DAEMON_URL}/api/mcp/tool`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, args })
+    });
+    
+    const result = await res.json();
+    return result as any;
+  } catch (err: any) {
+    return { content: [{ type: "text", text: `Error calling daemon: ${err.message}` }], isError: true };
   }
 });
 
 async function main() {
-  const port = 12222;
-
-  // Start or reuse the browser console service for this machine.
-  const httpServer = await startHttpServer(port);
-  globalHttpPort = httpServer.port;
+  await ensureDaemonRunning();
+  connectDaemonEvents();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-
-  // Resolve absolute path to this build file for MCP client config
-  const selfPath = process.argv[1]
-    ? path.resolve(process.argv[1])
-    : path.join(path.dirname(fileURLToPath(import.meta.url)), "index.js");
-
-  const mcpConfig = {
-    mcpServers: {
-      "ssh-mcp": {
-        command: "node",
-        args: [selfPath]
-      }
-    }
-  };
-
-  console.error("╔══════════════════════════════════════════════════════════╗");
-  console.error("║              SSH-MCP Server — READY                     ║");
-  console.error("╠══════════════════════════════════════════════════════════╣");
-  console.error("║  Protocol : stdio (MCP JSON-RPC)                        ║");
-  console.error(`║  REST/WS  : http://localhost:${httpServer.port}                      ║`);
-  console.error(`║  Web UI   : http://localhost:${httpServer.port}                      ║`);
-  console.error(`║  UI Mode  : ${httpServer.reused ? "reuse existing" : "started local"}                         ║`);
-  console.error("╠══════════════════════════════════════════════════════════╣");
-  console.error("║  Add to your MCP client (e.g. Claude Desktop):          ║");
-  console.error("╚══════════════════════════════════════════════════════════╝");
-  console.error(JSON.stringify(mcpConfig, null, 2));
-  console.error("────────────────────────────────────────────────────────────");
-
-  // Remove any legacy on-disk session store from older versions.
-  await loadAndReconnectSessions();
 }
 
 main().catch((err) => {
