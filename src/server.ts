@@ -11,6 +11,7 @@ import {
   writeInputToShell,
   listActiveShells
 } from "./handlers/shell.js";
+import { globalEvents } from "./eventBus.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // UI assets are located in the sibling 'ui/dist' folder relative to 'build/'
@@ -24,7 +25,7 @@ export interface HttpServerStartResult {
   server?: http.Server;
 }
 
-let SERVER_VERSION = "2.1.1";
+let SERVER_VERSION = "2.1.2";
 try {
   const pkgPath = path.join(__dirname, "..", "package.json");
   const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
@@ -98,6 +99,36 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
     if (url.pathname === "/api/version" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ version: SERVER_VERSION }));
+      return;
+    }
+
+    if (url.pathname === "/api/events" && req.method === "GET") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*"
+      });
+      res.write("retry: 3000\n\n");
+
+      const sendEvent = (event: string, data: any) => {
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+
+      const onSessionsChanged = () => sendEvent("sessions_changed", {});
+      const onShellsChanged = () => sendEvent("shells_changed", {});
+      const onSftpChanged = (data: any) => sendEvent("sftp_changed", data);
+
+      globalEvents.on("sessions_changed", onSessionsChanged);
+      globalEvents.on("shells_changed", onShellsChanged);
+      globalEvents.on("sftp_changed", onSftpChanged);
+
+      req.on("close", () => {
+        globalEvents.off("sessions_changed", onSessionsChanged);
+        globalEvents.off("shells_changed", onShellsChanged);
+        globalEvents.off("sftp_changed", onSftpChanged);
+      });
       return;
     }
 
@@ -514,6 +545,8 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
             });
           });
 
+          globalEvents.emit("sftp_changed", { sessionId, path: uploadPath });
+
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ content: [{ type: "text", text: `Uploaded ${fileBuffer.length} bytes to ${uploadPath}` }] }));
         } catch (err: any) {
@@ -530,6 +563,21 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
 
 
     // ======== System Monitoring REST Routes ========
+    const statsMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/stats$/);
+    if (statsMatch && req.method === "GET") {
+      const sessionId = statsMatch[1];
+      try {
+        const { handleStats } = await import("./handlers/system.js");
+        const result = await handleStats({ sessionId });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err: any) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ isError: true, error: err.message }));
+      }
+      return;
+    }
+
     const sysinfoMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/sysinfo$/);
     if (sysinfoMatch && req.method === "GET") {
       const sessionId = sysinfoMatch[1];

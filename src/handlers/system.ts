@@ -6,6 +6,53 @@ import {
   SshDiskUsageArgs,
 } from "../types.js";
 
+// --- Stats (CPU/Mem %) ---
+export async function handleStats(args: { sessionId: string; timeout?: number }) {
+  const timeout = args.timeout ?? 5000;
+  // Use /proc/stat and /proc/meminfo for robust cross-distro metrics without depending on top/free formatting
+  const cmd = `
+    MemTotal=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
+    MemAvail=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
+    if [ -z "$MemAvail" ]; then MemAvail=$(awk '/MemFree:/ {print $2}' /proc/meminfo); fi
+    if [ -n "$MemTotal" ] && [ "$MemTotal" -gt 0 ] && [ -n "$MemAvail" ]; then
+      MEM=$(awk "BEGIN {printf \\"%.1f\\", (($MemTotal - $MemAvail) / $MemTotal) * 100}")
+    else
+      MEM="0"
+    fi
+
+    CPU_LINE=$(head -n 1 /proc/stat)
+    IDLE1=$(echo $CPU_LINE | awk '{print $5}')
+    TOTAL1=$(echo $CPU_LINE | awk '{for(i=2;i<=NF;i++) sum+=$i; print sum}')
+    
+    sleep 0.2
+    
+    CPU_LINE2=$(head -n 1 /proc/stat)
+    IDLE2=$(echo $CPU_LINE2 | awk '{print $5}')
+    TOTAL2=$(echo $CPU_LINE2 | awk '{for(i=2;i<=NF;i++) sum+=$i; print sum}')
+    
+    if [ -n "$TOTAL1" ] && [ -n "$TOTAL2" ] && [ "$TOTAL2" -gt "$TOTAL1" ]; then
+      CPU=$(awk "BEGIN {printf \\"%.1f\\", 100 * (1 - ($IDLE2 - $IDLE1) / ($TOTAL2 - $TOTAL1))}")
+    else
+      CPU="0"
+    fi
+
+    echo "$CPU|$MEM"
+  `;
+  try {
+    const rawOutput = await resolveClient(args, (client) =>
+      execSimple(client, cmd, timeout)
+    ) as string;
+    const parts = rawOutput.trim().split("|");
+    return {
+      cpu: parseFloat(parts[0]) || 0,
+      mem: parseFloat(parts[1]) || 0,
+      time: Date.now()
+    };
+  } catch (err) {
+    return { cpu: 0, mem: 0, time: Date.now(), error: true };
+  }
+}
+
 function execSimple(client: Client, command: string, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Command timeout after ${timeoutMs}ms`)), timeoutMs);

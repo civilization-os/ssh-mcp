@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import { globalEvents } from "./eventBus.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS_STORE_PATH = path.join(__dirname, "..", "sessions-store.json");
@@ -142,6 +143,7 @@ function saveSessionMeta() {
   }
   try {
     fs.writeFileSync(SESSIONS_META_PATH, JSON.stringify(meta, null, 2), "utf-8");
+    globalEvents.emit("sessions_changed");
   } catch (e) {
     console.error("[session] Failed to save session metadata:", e);
   }

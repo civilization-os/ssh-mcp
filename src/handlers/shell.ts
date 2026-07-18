@@ -5,6 +5,7 @@ import {
   SshShellResizeArgs, SshShellCloseArgs, ToolResult,
 } from "../types.js";
 import { EventEmitter } from "events";
+import { globalEvents } from "../eventBus.js";
 
 export const shellEvents = new EventEmitter();
 
@@ -130,6 +131,7 @@ export function cleanShellsBySession(sessionId: string) {
       shellEvents.emit("close", id);
     }
   }
+  globalEvents.emit("shells_changed");
 }
 
 // --- WebSocket Support Helpers ---
@@ -311,6 +313,7 @@ export async function handleShellCreate(args: SshShellArgs) {
       });
 
       shells.set(shellId, shell);
+      globalEvents.emit("shells_changed");
 
       // Small delay to capture the shell prompt
       setTimeout(() => {
@@ -500,6 +503,7 @@ export async function handleShellClose(args: SshShellCloseArgs) {
   }
   shells.delete(args.shellId);
   shellEvents.emit("close", args.shellId);
+  globalEvents.emit("shells_changed");
 
   return {
     content: [{

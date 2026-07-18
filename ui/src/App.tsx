@@ -1,6 +1,10 @@
 import { useEffect, useState, useRef } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
+import { EditorView } from "./EditorView";
+// Custom Resizer implemented, removed Allotment
+import "allotment/dist/style.css";
+import { MonitorView } from "./MonitorView";
 import { translations } from "./i18n";
 import type { Language } from "./i18n";
 
@@ -137,6 +141,10 @@ export default function App() {
   
   // Navigation Tabs
   const [activeTab, setActiveTab] = useState<"terminal" | "sftp" | "monitor">("terminal");
+  type SecondaryPaneContent = null | { type: "editor"; filePath: string } | { type: "monitor" };
+  const [secondaryPane, setSecondaryPane] = useState<SecondaryPaneContent>(null);
+  const [splitWidth, setSplitWidth] = useState(50);
+  const isDragging = useRef(false);
   
   // Modal & Form States
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -688,34 +696,81 @@ export default function App() {
               lang={lang}
               onEdit={openEditModal}
             />
-            {activeTab === "terminal" && (
-              activeShellId ? (
-                <XtermView shellId={activeShellId} key={activeShellId} lang={lang} />
-              ) : (
-                <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center" }}>
-                  <div className="shadcn-card" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
-                    <div style={{ fontSize: "48px", marginBottom: "16px" }}>💻</div>
-                    <h2 style={{ color: "hsl(var(--foreground))", fontWeight: 600, fontSize: "18px", marginBottom: "8px" }}>
-                      {t("welcomeTitle")}
-                    </h2>
-                    <p style={{ color: "hsl(var(--muted-foreground))", fontSize: "13px", lineHeight: "1.5" }}>
-                      {t("welcomeDesc")}
-                    </p>
-                    <button className="shadcn-btn shadcn-btn-primary" onClick={handleOpenShell} style={{ marginTop: "20px", padding: "10px 24px" }}>
-                      {t("newBtn")}
-                    </button>
+            <div 
+              style={{ flex: 1, position: "relative", overflow: "hidden", width: "100%", display: "flex" }}
+              onMouseMove={(e) => {
+                if (!isDragging.current) return;
+                const container = e.currentTarget;
+                const rect = container.getBoundingClientRect();
+                const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
+                setSplitWidth(Math.max(10, Math.min(90, newWidth)));
+              }}
+              onMouseUp={() => isDragging.current = false}
+              onMouseLeave={() => isDragging.current = false}
+            >
+              <div style={{ width: secondaryPane ? `${splitWidth}%` : "100%", height: "100%", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", overflow: "hidden", position: "relative" }}>
+                  <div style={{ display: activeTab === "terminal" ? "flex" : "none", flex: 1, height: "100%", width: "100%", overflow: "hidden" }}>
+                    {activeShellId ? (
+                      <XtermView shellId={activeShellId} key={activeShellId} lang={lang} />
+                    ) : (
+                      <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center" }}>
+                        <div className="shadcn-card" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
+                          <div style={{ fontSize: "48px", marginBottom: "16px" }}>💻</div>
+                          <h2 style={{ color: "hsl(var(--foreground))", fontWeight: 600, fontSize: "18px", marginBottom: "8px" }}>
+                            {t("welcomeTitle")}
+                          </h2>
+                          <p style={{ color: "hsl(var(--muted-foreground))", fontSize: "13px", lineHeight: "1.5" }}>
+                            {t("welcomeDesc")}
+                          </p>
+                          <button className="shadcn-btn shadcn-btn-primary" onClick={handleOpenShell} style={{ marginTop: "20px", padding: "10px 24px" }}>
+                            {t("newBtn")}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: activeTab === "sftp" ? "flex" : "none", flex: 1, height: "100%", width: "100%", overflow: "hidden" }}>
+                    <SftpView sessionId={selectedSessionId} lang={lang} onOpenFile={(path) => setSecondaryPane({ type: "editor", filePath: path })} />
+                  </div>
+                  <div style={{ display: activeTab === "monitor" ? "flex" : "none", flex: 1, height: "100%", width: "100%", overflow: "hidden" }}>
+                    <MonitorView sessionId={selectedSessionId} lang={lang} />
                   </div>
                 </div>
-              )
-            )}
+              </div>
 
-            {activeTab === "sftp" && (
-              <SftpView sessionId={selectedSessionId} lang={lang} />
-            )}
-
-            {activeTab === "monitor" && (
-              <MonitorView sessionId={selectedSessionId} lang={lang} />
-            )}
+              {secondaryPane && (
+                <>
+                  <div 
+                    style={{ 
+                      width: "4px", 
+                      height: "100%", 
+                      cursor: "col-resize", 
+                      backgroundColor: "transparent",
+                      zIndex: 10,
+                      position: "relative"
+                    }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      isDragging.current = true;
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "hsl(var(--border))"}
+                    onMouseLeave={(e) => { if (!isDragging.current) e.currentTarget.style.backgroundColor = "transparent"; }}
+                  >
+                    {/* Visual line */}
+                    <div style={{ width: "1px", height: "100%", margin: "0 auto", backgroundColor: "hsl(var(--border))" }} />
+                  </div>
+                  <div style={{ width: `calc(${100 - splitWidth}% - 4px)`, height: "100%", overflow: "hidden" }}>
+                    {secondaryPane.type === "editor" && (
+                      <EditorView sessionId={selectedSessionId} filePath={secondaryPane.filePath || ""} onClose={() => setSecondaryPane(null)} />
+                    )}
+                    {secondaryPane.type === "monitor" && (
+                      <MonitorView sessionId={selectedSessionId} lang={lang} />
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1029,18 +1084,35 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
         </div>
       </div>
 
-      {/* Edit button */}
-      <button
-        onClick={() => onEdit(session)}
-        className="shadcn-btn shadcn-btn-outline"
-        style={{
-          padding: "6px 12px",
-          fontSize: "12px",
-          height: "32px",
-        }}
-      >
-        {t("editSession")}
-      </button>
+      {/* Buttons */}
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('open-monitor', { detail: { sessionId: session.id } }))}
+          className="shadcn-btn shadcn-btn-outline"
+          style={{
+            padding: '6px 12px',
+            fontSize: '12px',
+            height: '32px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}
+          title={t("tabMonitor")}
+        >
+          📊 {t("tabMonitor")}
+        </button>
+        <button
+          onClick={() => onEdit(session)}
+          className="shadcn-btn shadcn-btn-outline"
+          style={{
+            padding: '6px 12px',
+            fontSize: '12px',
+            height: '32px',
+          }}
+        >
+          {t("editSession")}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1213,7 +1285,7 @@ interface SftpViewProps {
   lang: Language;
 }
 
-function SftpView({ sessionId, lang }: SftpViewProps) {
+function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOpenFile?: (path: string) => void }) {
   const [path, setPath] = useState("/");
   const [files, setFiles] = useState<SftpFile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1263,6 +1335,12 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
   };
 
   useEffect(() => { loadFiles("/"); }, [sessionId]);
+
+  const handleRowDoubleClick = (file: SftpFile) => {
+    if (file.type === "file" || file.type === "symlink") {
+      if (onOpenFile) onOpenFile(path === "/" ? `/${file.name}` : `${path}/${file.name}`);
+    }
+  };
 
   const handleRowClick = (file: SftpFile) => {
     if (file.type === "dir") {
@@ -1389,7 +1467,7 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
 
 
   return (
-    <div style={{ padding: "24px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box", overflow: "hidden", gap: "16px" }}>
+    <div style={{ padding: "24px", display: "flex", flexDirection: "column", flex: 1, height: "100%", width: "100%", boxSizing: "border-box", overflow: "hidden", gap: "16px" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <h2 style={{ fontSize: "16px", fontWeight: 600, margin: 0, color: "hsl(var(--foreground))" }}>
@@ -1514,6 +1592,7 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                   <tr
                     key={idx}
                     onClick={() => handleRowClick(file)}
+                    onDoubleClick={() => handleRowDoubleClick(file)}
                     style={{
                       borderBottom: "1px solid hsl(var(--border))",
                       cursor: "pointer",
@@ -1549,11 +1628,29 @@ function SftpView({ sessionId, lang }: SftpViewProps) {
                     </td>
                     <td style={{ padding: "8px 12px", textAlign: "right" }}>
                       <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", alignItems: "center" }} onClick={e => e.stopPropagation()}>
+                        {/* Edit (files and symlinks) */}
+                        {(file.type === "file" || file.type === "symlink") && (
+                          <button
+                            title={t("sftpEdit")}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onOpenFile) {
+                                onOpenFile(path === "/" ? `/${file.name}` : `${path}/${file.name}`);
+                              }
+                            }}
+                            className="shadcn-btn shadcn-btn-underline"
+                          >
+                            ✎ {t("sftpEdit")}
+                          </button>
+                        )}
                         {/* Download (files and symlinks) */}
                         {(file.type === "file" || file.type === "symlink") && (
                           <button
                             title={t("sftpDownload")}
-                            onClick={() => handleDownload(file)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownload(file);
+                            }}
                             className="shadcn-btn shadcn-btn-underline"
                           >
                             ↓ {t("sftpDownload")}
@@ -1609,127 +1706,4 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-// ======== VIEW 4: System Monitor View ========
-
-interface MonitorViewProps {
-  sessionId: string;
-  lang: Language;
-}
-
-interface ProcessInfo {
-  pid: number;
-  cpu: string;
-  mem: string;
-  command: string;
-}
-
-function MonitorView({ sessionId, lang }: MonitorViewProps) {
-  const [sysinfo, setSysinfo] = useState("");
-  const [processes, setProcesses] = useState<ProcessInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const t = (key: keyof typeof translations["en"]): string => {
-    return translations[lang][key] || translations["en"][key] || "";
-  };
-
-  const loadMonitorData = async () => {
-    setLoading(true);
-    try {
-      // Load sysinfo
-      const sysRes = await fetch(`${API_BASE}/api/sessions/${sessionId}/sysinfo`);
-      const sysData = await sysRes.json();
-      if (sysData.content && sysData.content[0]) {
-        setSysinfo(sysData.content[0].text);
-      }
-
-      // Load processes
-      const procRes = await fetch(`${API_BASE}/api/sessions/${sessionId}/processes?limit=15`);
-      const procData = await procRes.json();
-      if (procData.content && procData.content[0]) {
-        const lines = procData.content[0].text.trim().split("\n");
-        const list: ProcessInfo[] = [];
-        for (let i = 1; i < lines.length; i++) {
-          const cols = lines[i].trim().split(/\s+/);
-          if (cols.length >= 11) {
-            list.push({
-              pid: parseInt(cols[1], 10) || 0,
-              cpu: cols[2],
-              mem: cols[3],
-              command: cols.slice(10).join(" ")
-            });
-          } else if (cols.length >= 4) {
-            list.push({
-              pid: parseInt(cols[0], 10) || 0,
-              cpu: cols[1],
-              mem: cols[2],
-              command: cols.slice(3).join(" ")
-            });
-          }
-        }
-        setProcesses(list);
-      }
-    } catch (e) {
-      console.error("Failed to load monitor data:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadMonitorData();
-    const timer = setInterval(loadMonitorData, 6000);
-    return () => clearInterval(timer);
-  }, [sessionId]);
-
-  return (
-    <div style={{ padding: "24px", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box", overflow: "hidden", gap: "16px" }}>
-      <h2 style={{ fontSize: "16px", fontWeight: 600, margin: 0, color: "hsl(var(--foreground))" }}>{t("tabMonitor")}</h2>
-
-      <div style={{ display: "flex", gap: "24px", flex: 1, overflow: "hidden" }}>
-        
-        {/* Left: Sysinfo Text Panel */}
-        <div className="shadcn-card" style={{ flex: 1, padding: "16px", display: "flex", flexDirection: "column" }}>
-          <h3 style={{ fontSize: "14px", fontWeight: 600, marginBottom: "12px", color: "hsl(var(--foreground))" }}>
-            {t("sysLoad")}
-          </h3>
-          <div style={{ flex: 1, background: "rgba(0,0,0,0.2)", borderRadius: "6px", padding: "16px", fontFamily: "monospace", fontSize: "13px", whiteSpace: "pre-wrap", overflowY: "auto", border: "1px solid hsl(var(--border))" }}>
-            {loading && !sysinfo ? "Loading diagnostics..." : sysinfo}
-          </div>
-        </div>
-
-        {/* Right: Active processes table */}
-        <div className="shadcn-card" style={{ flex: 1, padding: "16px", display: "flex", flexDirection: "column" }}>
-          <h3 style={{ fontSize: "14px", fontWeight: 600, marginBottom: "12px", color: "hsl(var(--foreground))" }}>
-            {t("processes")}
-          </h3>
-          <div style={{ flex: 1, overflowY: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid hsl(var(--border))", color: "hsl(var(--muted-foreground))" }}>
-                  <th style={{ padding: "8px" }}>PID</th>
-                  <th style={{ padding: "8px" }}>CPU%</th>
-                  <th style={{ padding: "8px" }}>MEM%</th>
-                  <th style={{ padding: "8px" }}>Command</th>
-                </tr>
-              </thead>
-              <tbody>
-                {processes.map((proc, idx) => (
-                  <tr key={idx} style={{ borderBottom: "1px solid hsl(var(--border))" }}>
-                    <td style={{ padding: "8px", fontFamily: "monospace" }}>{proc.pid}</td>
-                    <td style={{ padding: "8px", color: "hsl(var(--foreground))", fontWeight: 600 }}>{proc.cpu}%</td>
-                    <td style={{ padding: "8px", color: "hsl(var(--muted-foreground))" }}>{proc.mem}%</td>
-                    <td style={{ padding: "8px", fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "180px" }} title={proc.command}>
-                      {proc.command}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }

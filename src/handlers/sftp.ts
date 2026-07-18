@@ -10,15 +10,31 @@ import {
   SshFileChmodArgs,
   SshFileStatArgs,
 } from "../types.js";
+import { globalEvents } from "../eventBus.js";
 
 function withSftp<T>(client: Client, timeoutMs: number, fn: (sftp: import("ssh2").SFTPWrapper) => Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`SFTP operation timeout after ${timeoutMs}ms`)), timeoutMs);
+
+    const cachedSftp = (client as any)._sftp;
+    if (cachedSftp) {
+      fn(cachedSftp).finally(() => {
+        clearTimeout(timer);
+      }).then(resolve, reject);
+      return;
+    }
+
     client.sftp((err, sftp) => {
       if (err) { clearTimeout(timer); reject(err); return; }
+      
+      // Cache it to avoid ~1s channel creation overhead per request
+      (client as any)._sftp = sftp;
+      sftp.on('end', () => { (client as any)._sftp = undefined; });
+      sftp.on('error', () => { (client as any)._sftp = undefined; });
+      sftp.on('close', () => { (client as any)._sftp = undefined; });
+
       fn(sftp).finally(() => {
         clearTimeout(timer);
-        try { sftp.end(); } catch { /* ignore */ }
       }).then(resolve, reject);
     });
   });
@@ -64,6 +80,8 @@ export async function handleWriteFile(args: SshFileWriteArgs) {
     })
   );
 
+  globalEvents.emit("sftp_changed", { sessionId: args.sessionId, path: args.path });
+
   return {
     content: [{
       type: "text" as const,
@@ -78,32 +96,27 @@ export async function handleListDir(args: SshFileListArgs) {
   const result = await resolveClient(args, (client) =>
     withSftp(client, args.timeout ?? 30000, async (sftp) => {
       // 1. readdir to get file list
+      console.time('readdir');
       const list = await new Promise<any[]>((resolve, reject) => {
         sftp.readdir(args.path, (err, entries) => err ? reject(err) : resolve(entries));
       });
+      console.timeEnd('readdir');
 
-      // 2. For symlinks, call readlink() in parallel to get targets reliably
-      const symlinkTargets = new Map<string, string>();
-      await Promise.all(list.map(item => {
-        if (!item.attrs.isSymbolicLink()) return Promise.resolve();
-        const fullPath = args.path.replace(/\/$/, "") + "/" + item.filename;
-        return new Promise<void>(resolve => {
-          sftp.readlink(fullPath, (err, target) => {
-            if (!err && target) symlinkTargets.set(item.filename, target);
-            resolve();
-          });
-        });
-      }));
-
-      // 3. Build text lines
+      // 2. Build text lines directly (extract symlink targets from longname to avoid RTT)
       const lines = list.map(item => {
         const type = item.attrs.isDirectory() ? "d" : item.attrs.isSymbolicLink() ? "l" : "-";
         const perms = modeToString(item.attrs.mode);
         const size = item.attrs.size.toString().padStart(10);
         const mtime = new Date(item.attrs.mtime * 1000).toISOString().replace("T", " ").substring(0, 19);
-        const link = item.attrs.isSymbolicLink()
-          ? ` -> ${symlinkTargets.get(item.filename) ?? ""}`
-          : "";
+        
+        let link = "";
+        if (item.attrs.isSymbolicLink()) {
+          const arrowIdx = item.longname?.indexOf(" -> ");
+          if (arrowIdx !== -1 && item.longname) {
+            link = ` -> ${item.longname.substring(arrowIdx + 4)}`;
+          }
+        }
+        
         return `${type}${perms} ${size} ${mtime} ${item.filename}${link}`;
       });
       return lines.join("\n");
@@ -126,6 +139,8 @@ export async function handleDelete(args: SshFileDeleteArgs) {
       });
     })
   );
+
+  globalEvents.emit("sftp_changed", { sessionId: args.sessionId, path: args.path });
 
   return { content: [{ type: "text" as const, text: `Deleted: ${args.path}` }] };
 }
@@ -170,6 +185,8 @@ export async function handleRename(args: SshFileRenameArgs) {
     })
   );
 
+  globalEvents.emit("sftp_changed", { sessionId: args.sessionId, path: args.dest });
+
   return {
     content: [{ type: "text" as const, text: `Renamed: ${args.source} -> ${args.dest}` }],
   };
@@ -211,7 +228,9 @@ export async function handleMkdir(args: SshFileMkdirArgs) {
     )
   );
 
-  return { content: [{ type: "text" as const, text: `Directory created: ${args.path}` }] };
+  globalEvents.emit("sftp_changed", { sessionId: args.sessionId, path: args.path });
+
+  return { content: [{ type: "text" as const, text: `Created directory: ${args.path}` }] };
 }
 
 // --- Chmod ---
