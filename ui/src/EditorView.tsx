@@ -22,20 +22,25 @@ export function EditorView({ sessionId, filePath, onClose }: EditorViewProps) {
   };
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchFile = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/download?path=${encodeURIComponent(filePath)}`);
+        const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/download?path=${encodeURIComponent(filePath)}`, {
+          signal: controller.signal
+        });
         if (!res.ok) throw new Error("Failed to load file");
         const text = await res.text();
         setContent(text);
-      } catch (e) {
+      } catch (e: any) {
+        if (e.name === "AbortError") return;
         showToast("加载文件失败", "error");
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
     fetchFile();
+    return () => controller.abort();
   }, [sessionId, filePath]);
 
   const handleEditorDidMount = (editor: any, monaco: any) => {
@@ -91,26 +96,27 @@ export function EditorView({ sessionId, filePath, onClose }: EditorViewProps) {
       </div>
       
       <div style={{ flex: 1, position: "relative" }}>
-        {loading ? (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "hsl(var(--muted-foreground))" }}>
+        <Editor
+          height="100%"
+          theme="vs-dark"
+          path={filePath}
+          value={content}
+          loading={null}
+          onMount={handleEditorDidMount}
+          options={{
+            readOnly: loading,
+            minimap: { enabled: false },
+            fontSize: 14,
+            fontFamily: "monospace",
+            scrollBeyondLastLine: false,
+            wordWrap: "on",
+            padding: { top: 16 }
+          }}
+        />
+        {loading && (
+          <div className="editor-loading-overlay">
             加载中...
           </div>
-        ) : (
-          <Editor
-            height="100%"
-            theme="vs-dark"
-            path={filePath}
-            value={content}
-            onMount={handleEditorDidMount}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              fontFamily: "monospace",
-              scrollBeyondLastLine: false,
-              wordWrap: "on",
-              padding: { top: 16 }
-            }}
-          />
         )}
       </div>
 

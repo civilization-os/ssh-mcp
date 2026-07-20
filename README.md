@@ -68,6 +68,8 @@ Example `k8s_connect` payload using a bearer token:
 
 ### Quick Start
 
+For a complete install guide for Codex, Claude, Cursor, and local development, see [install.md](install.md).
+
 #### Option 1: Use `npx` (Easiest, No Install)
 
 No need to clone the repo. Just use `npx` in your MCP client config. This always uses the latest version.
