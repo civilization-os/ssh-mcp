@@ -60,7 +60,26 @@ describe("separateInputEcho", () => {
     );
 
     expect(separated.inputEcho).toEqual(["printf '__MCP_DONE__\\n'"]);
-    expect(separated.programLines).toEqual(["root@host:~#", "__MCP_DONE__", "root@host:~#"]);
+    expect(separated.programLines).toEqual(["__MCP_DONE__", "root@host:~#"]);
+  });
+
+  it("removes a Bash prompt plus command echo even when the prompt was redrawn", () => {
+    const command = "sleep 3; echo EXPECT_REAL_OUTPUT";
+    const separated = separateInputEcho(
+      [
+        `(base) [root@server current]# ${command}`,
+        "EXPECT_REAL_OUTPUT",
+        "(base) [root@server current]#",
+      ],
+      `${command}\n`,
+      "(base) [root@server previous]#",
+    );
+
+    expect(separated.inputEcho).toEqual([command]);
+    expect(separated.programLines).toEqual([
+      "EXPECT_REAL_OUTPUT",
+      "(base) [root@server current]#",
+    ]);
   });
 
   it("does not remove output when the terminal did not echo the input", () => {

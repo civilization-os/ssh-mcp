@@ -23,7 +23,7 @@ import {
 } from "./desktopRuntime.js";
 
 const server = new Server(
-  { name: "ssh-mcp-desktop", version: "2.5.0" },
+  { name: "ssh-mcp-desktop", version: "2.5.1" },
   {
     capabilities: {
       tools: { listChanged: true },

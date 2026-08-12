@@ -20,6 +20,10 @@ export interface SeparatedTerminalOutput {
   programLines: string[];
 }
 
+function looksLikeShellPromptPrefix(value: string): boolean {
+  return /[$#>%❯➜λ]$/.test(value.trimEnd());
+}
+
 export class TerminalView {
   private readonly terminal: HeadlessTerminal;
   private writeQueue: Promise<void> = Promise.resolve();
@@ -124,6 +128,7 @@ export function separateInputEcho(
 ): SeparatedTerminalOutput {
   const programLines = [...lines];
   const inputEcho: string[] = [];
+  const echoLineIndexes = new Set<number>();
   const candidates = input
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
@@ -137,18 +142,23 @@ export function separateInputEcho(
       const line = programLines[lineIndex];
       const echoStart = line.lastIndexOf(candidate);
       if (echoStart === -1 || echoStart + candidate.length !== line.length) continue;
+      const observedPrefix = line.slice(0, echoStart);
       if (
         candidateIndex === 0 &&
         inputEchoPrefix !== undefined &&
-        line.slice(0, echoStart).trimEnd() !== inputEchoPrefix.trimEnd()
+        observedPrefix.trimEnd() !== inputEchoPrefix.trimEnd() &&
+        !looksLikeShellPromptPrefix(observedPrefix)
       ) continue;
 
       inputEcho.push(candidate);
-      programLines[lineIndex] = line.slice(0, echoStart).trimEnd();
+      echoLineIndexes.add(lineIndex);
       searchFrom = lineIndex + 1;
       break;
     }
   }
 
-  return { inputEcho, programLines };
+  return {
+    inputEcho,
+    programLines: programLines.filter((_line, lineIndex) => !echoLineIndexes.has(lineIndex)),
+  };
 }

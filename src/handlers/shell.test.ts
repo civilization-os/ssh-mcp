@@ -115,7 +115,7 @@ describe("handleShellRead", () => {
     const client = {
       shell: vi.fn((_options: unknown, callback: (error: undefined, channel: any) => void) => {
         callback(undefined, channel);
-        setTimeout(() => channel.emit("data", Buffer.from("root@host:~# ")), 10);
+        setTimeout(() => channel.emit("data", Buffer.from("(base) [root@host previous]# ")), 10);
       }),
     };
     getSessionMock.mockReturnValue({ id: "sess_echo", type: "ssh", client });
@@ -125,27 +125,28 @@ describe("handleShellRead", () => {
     const shellId = created.content[0].text.match(/Interactive shell created: (\S+)/)?.[1];
     expect(shellId).toBeTruthy();
 
-    const command = "echo __MCP_DONE__";
+    const command = "sleep 3; echo EXPECT_REAL_OUTPUT";
     await shellModule.handleShellWrite({ shellId, input: command });
     const readPromise = shellModule.handleShellRead({
       shellId,
-      expect: "__MCP_DONE__",
+      expect: "EXPECT_REAL_OUTPUT",
       maxWaitMs: 500,
     }) as Promise<any>;
 
-    channel.emit("data", Buffer.from(`${command}\r\n`));
+    channel.emit("data", Buffer.from(`\r\x1b[2K(base) [root@host current]# ${command}\r\n`));
     let resolved = false;
     void readPromise.then(() => { resolved = true; });
     await new Promise(resolve => setTimeout(resolve, 40));
     expect(resolved).toBe(false);
 
-    channel.emit("data", Buffer.from("__MCP_DONE__\r\nroot@host:~# "));
+    channel.emit("data", Buffer.from("EXPECT_REAL_OUTPUT\r\n(base) [root@host current]# "));
     const read = await readPromise;
     const payload = JSON.parse(read.content[0].text);
     expect(payload.inputEcho).toEqual([command]);
     expect(payload.content).toContain(command);
     expect(payload.programOutput).not.toContain(command);
-    expect(payload.programOutput).toContain("__MCP_DONE__");
+    expect(payload.programOutput).not.toContain("[root@host previous]");
+    expect(payload.programOutput).toContain("EXPECT_REAL_OUTPUT");
 
     await shellModule.handleShellClose({ shellId });
   });

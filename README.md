@@ -118,7 +118,7 @@ This console bundles:
 - **Shell output streaming**: Subscribe to `mcp://ssh/shell/{shellId}/output` for real-time shell updates.
 - **`expect` matching**: `ssh_shell_read` waits for a regex in program output only, so a completion marker inside the terminal's echoed command cannot match early.
 - **Terminal-semantic reads**: `ssh_shell_read` applies carriage returns, backspace, tabs, ANSI erase/cursor movement, alternate screens, and wide-character layout before returning text to the agent.
-- **Echo-aware output**: The full terminal remains visible in `content`, while `inputEcho` identifies echoed MCP input and `programOutput` excludes it for reliable automation.
+- **Echo-aware output**: The full terminal remains visible in `content`, while `inputEcho` identifies echoed MCP input and `programOutput` removes the complete prompt-plus-command echo, including when Bash redraws or changes its prompt.
 - **Shared terminal geometry**: App resize events update both the remote PTY and the headless terminal view, so the user and agent read the same row/column layout.
 - **Incremental / peek reads**: `ssh_shell_read` returns visible changes since the last `ssh_shell_write` by default; repeated reads keep the same semantic window until the next write or `clear: true`. Use `peek: true` for rendered scrollback.
 - **Keep-alive**: Optional heartbeats (`\x00`) to prevent `TMOUT` session disconnects on strict servers.
