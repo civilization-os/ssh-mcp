@@ -8,6 +8,7 @@ import "allotment/dist/style.css";
 import { MonitorView } from "./MonitorView";
 import { translations } from "./i18n";
 import type { Language } from "./i18n";
+import { DesktopSettingsControl } from "./DesktopSettings";
 
 interface SshSession {
   id: string;
@@ -38,6 +39,75 @@ const WS_BASE =
   typeof window === "undefined"
     ? "ws://127.0.0.1:12222"
     : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+
+function DesktopMcpControl({ collapsed, lang }: { collapsed: boolean; lang: Language }) {
+  const [desktopState, setDesktopState] = useState<SshMcpDesktopState | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const desktopApi = window.sshMcpDesktop;
+    if (!desktopApi) return;
+
+    let disposed = false;
+    void desktopApi.getState()
+      .then(state => { if (!disposed) setDesktopState(state); })
+      .catch(cause => { if (!disposed) setError(cause instanceof Error ? cause.message : String(cause)); });
+    const unsubscribe = desktopApi.onStateChanged(state => {
+      if (!disposed) setDesktopState(state);
+    });
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+
+  if (!window.sshMcpDesktop || !desktopState) return null;
+
+  const toggleMcp = async () => {
+    if (updating || desktopState.shuttingDown) return;
+    setUpdating(true);
+    setError("");
+    try {
+      setDesktopState(await window.sshMcpDesktop!.setMcpEnabled(!desktopState.mcpEnabled));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const enabledLabel = lang === "zh" ? "MCP 已授权" : "MCP allowed";
+  const disabledLabel = lang === "zh" ? "MCP 已阻止" : "MCP blocked";
+  const description = lang === "zh"
+    ? "控制 Codex、Claude 等 Agent 是否可以使用 SSH 能力"
+    : "Controls whether agents can use SSH capabilities";
+
+  return (
+    <div className={`desktop-mcp-gate ${collapsed ? "is-collapsed" : ""}`}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={desktopState.mcpEnabled}
+        aria-label={desktopState.mcpEnabled ? enabledLabel : disabledLabel}
+        className={`desktop-mcp-toggle ${desktopState.mcpEnabled ? "is-enabled" : ""}`}
+        disabled={updating || desktopState.shuttingDown}
+        onClick={toggleMcp}
+        title={collapsed ? `${desktopState.mcpEnabled ? enabledLabel : disabledLabel} — ${description}` : description}
+      >
+        <span className="desktop-mcp-signal" aria-hidden="true" />
+        {!collapsed && (
+          <span className="desktop-mcp-copy">
+            <strong>{desktopState.mcpEnabled ? enabledLabel : disabledLabel}</strong>
+            <small>{updating ? (lang === "zh" ? "正在切换权限…" : "Updating access…") : description}</small>
+          </span>
+        )}
+        {!collapsed && <span className="desktop-mcp-switch" aria-hidden="true"><i /></span>}
+      </button>
+      {!collapsed && error && <div className="desktop-mcp-error" role="alert">{error}</div>}
+    </div>
+  );
+}
 
 
 
@@ -373,19 +443,23 @@ export default function App() {
             left: "20px",
             width: "180px",
             display: "flex",
-            flexDirection: "column",
+            alignItems: "center",
+            gap: "10px",
             opacity: sidebarCollapsed ? 0 : 1,
             transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
             pointerEvents: sidebarCollapsed ? "none" : "auto",
             overflow: "hidden",
             whiteSpace: "nowrap"
           }}>
-            <h1 style={{ fontSize: "16px", margin: 0, fontWeight: 700, letterSpacing: "-0.02em", color: "hsl(var(--foreground))" }}>
-              {t("title")}
-            </h1>
-            <p style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))", marginTop: "4px" }}>
-              {t("subtitle")}
-            </p>
+            <img src="/icon.svg" alt="" width="34" height="34" className="app-brand-icon" />
+            <div style={{ minWidth: 0 }}>
+              <h1 style={{ fontSize: "16px", margin: 0, fontWeight: 700, letterSpacing: "-0.02em", color: "hsl(var(--foreground))" }}>
+                {t("title")}
+              </h1>
+              <p style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))", marginTop: "4px" }}>
+                {t("subtitle")}
+              </p>
+            </div>
           </div>
 
           {/* Buttons Container */}
@@ -424,6 +498,9 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        <DesktopMcpControl collapsed={sidebarCollapsed} lang={lang} />
+        <DesktopSettingsControl collapsed={sidebarCollapsed} lang={lang} />
 
         {/* Tab Selection - Upgraded */}
         {selectedSessionId && (
@@ -1137,7 +1214,7 @@ function XtermView({ shellId, lang }: XtermViewProps) {
       cursorBlink: true,
       fontSize,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-      scrollback: 50000,
+      scrollback: 10000,
       theme: {
         background: "#f8fafc",
         foreground: "#0f172a",
@@ -1166,7 +1243,15 @@ function XtermView({ shellId, lang }: XtermViewProps) {
     const wsUrl = `${WS_BASE}/ws/shell?shellId=${encodeURIComponent(shellId)}`;
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
-    socket.onopen = () => setIsSocketConnected(true);
+    const syncTerminalSize = () => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(`\x01RS${term.cols},${term.rows}`);
+      }
+    };
+    socket.onopen = () => {
+      setIsSocketConnected(true);
+      syncTerminalSize();
+    };
 
     socket.onmessage = (event) => { 
       if (typeof event.data === "string" && event.data === "\x01HB") {
@@ -1191,6 +1276,7 @@ function XtermView({ shellId, lang }: XtermViewProps) {
     const handleResize = () => {
       fitAddon.fit();
       setTerminalSize({ cols: term.cols, rows: term.rows });
+      syncTerminalSize();
     };
     window.addEventListener("resize", handleResize);
 
@@ -1211,6 +1297,9 @@ function XtermView({ shellId, lang }: XtermViewProps) {
     terminalRef.current.options.fontSize = fontSize;
     fitAddonRef.current?.fit();
     setTerminalSize({ cols: terminalRef.current.cols, rows: terminalRef.current.rows });
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(`\x01RS${terminalRef.current.cols},${terminalRef.current.rows}`);
+    }
   }, [fontSize]);
 
   const writeControl = (input: string) => {

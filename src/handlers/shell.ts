@@ -6,6 +6,7 @@ import {
 } from "../types.js";
 import { EventEmitter } from "events";
 import { globalEvents } from "../eventBus.js";
+import { semanticDelta, separateInputEcho, TerminalView } from "../terminalView.js";
 
 export const shellEvents = new EventEmitter();
 
@@ -19,9 +20,19 @@ interface ShellSession {
   closed: boolean;
   createdAt: number;
   wsClients?: Set<any>;
-  readCursor: number;
   keepAlive?: boolean;
   heartbeatTimer?: ReturnType<typeof setInterval>;
+  terminalView: TerminalView;
+  semanticBaseline: string[];
+  lastInput: string;
+  lastInputEchoPrefix: string;
+  parseQueue: Promise<void>;
+  terminalDisposeScheduled: boolean;
+}
+
+function getProgramOutputSinceWrite(shell: ShellSession): string[] {
+  const visibleLines = semanticDelta(shell.semanticBaseline, shell.terminalView.snapshot().historyLines);
+  return separateInputEcho(visibleLines, shell.lastInput, shell.lastInputEchoPrefix).programLines;
 }
 
 const shells = new Map<string, ShellSession>();
@@ -33,21 +44,31 @@ function generateShellId(): string {
   return `sh_${Date.now()}_${++shellIdCounter}`;
 }
 
-function appendBuffer(shell: ShellSession, data: string) {
-  shell.buffer += data;
+function appendBuffer(shell: ShellSession, data: Buffer | string) {
+  const text = typeof data === "string" ? data : data.toString("utf-8");
+  shell.buffer += text;
   if (shell.buffer.length > MAX_BUFFER_SIZE) {
     const overflow = shell.buffer.length - MAX_BUFFER_SIZE;
     shell.buffer = shell.buffer.slice(-MAX_BUFFER_SIZE);
-    // Adjust cursor after truncation
-    shell.readCursor = Math.max(0, (shell.readCursor || 0) - overflow);
   }
+  shell.parseQueue = shell.parseQueue
+    .then(() => shell.terminalView.write(typeof data === "string" ? data : new Uint8Array(data)))
+    .then(() => { shellEvents.emit("data", shell.id); })
+    .catch(error => {
+      console.error(`[shell] Failed to render terminal output for ${shell.id}:`, error);
+    });
 }
 
-function stripAnsi(text: string): string {
-  return text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+function disposeTerminalWhenFlushed(shell: ShellSession): void {
+  if (shell.terminalDisposeScheduled) return;
+  shell.terminalDisposeScheduled = true;
+  void shell.parseQueue
+    .then(() => shell.terminalView.dispose())
+    .catch(error => console.error(`[shell] Failed to dispose terminal view for ${shell.id}:`, error));
 }
 
-function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number, expectPattern?: string): Promise<void> {
+async function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number, expectPattern?: string): Promise<void> {
+  await shell.parseQueue;
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let maxTimer: ReturnType<typeof setTimeout> | null = null;
@@ -65,28 +86,30 @@ function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number, 
     const finish = () => {
       if (timer) clearTimeout(timer);
       if (maxTimer) clearTimeout(maxTimer);
-      shell.channel.removeListener("data", onData);
-      shell.channel.stderr.removeListener("data", onData);
+      shellEvents.removeListener("data", onData);
       shell.channel.removeListener("close", onClose);
       resolve();
     };
 
-    const onData = () => {
+    const onData = (shellId: string) => {
+      if (shellId !== shell.id) return;
+      const searchable = getProgramOutputSinceWrite(shell).join("\n");
       if (expectRegex) {
-        // Only check data after the cursor for new matches
-        const searchable = shell.buffer.slice(shell.readCursor);
         const tail = searchable.slice(-4096);
-        if (expectRegex.test(tail) || expectRegex.test(stripAnsi(tail))) {
+        expectRegex.lastIndex = 0;
+        if (expectRegex.test(tail)) {
           finish();
           return;
         }
-      } else if (expectPattern && shell.buffer.slice(shell.readCursor).includes(expectPattern)) {
+      } else if (expectPattern && searchable.includes(expectPattern)) {
         finish();
         return;
       }
 
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(finish, quietMs);
+      if (!expectPattern) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(finish, quietMs);
+      }
     };
 
     const onClose = () => {
@@ -94,25 +117,25 @@ function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: number, 
     };
 
     // Initial check (only in the new content since readCursor)
+    const initialSearchable = getProgramOutputSinceWrite(shell).join("\n");
     if (expectRegex) {
-      const searchable = shell.buffer.slice(shell.readCursor);
-      const tail = searchable.slice(-4096);
-      if (expectRegex.test(tail) || expectRegex.test(stripAnsi(tail))) {
+      const tail = initialSearchable.slice(-4096);
+      expectRegex.lastIndex = 0;
+      if (expectRegex.test(tail)) {
         finish();
         return;
       }
-    } else if (expectPattern && shell.buffer.slice(shell.readCursor).includes(expectPattern)) {
+    } else if (expectPattern && initialSearchable.includes(expectPattern)) {
       finish();
       return;
     }
 
-    timer = setTimeout(finish, quietMs);
+    if (!expectPattern) timer = setTimeout(finish, quietMs);
     if (maxWaitMs && maxWaitMs > 0) {
       maxTimer = setTimeout(finish, maxWaitMs);
     }
 
-    shell.channel.on("data", onData);
-    shell.channel.stderr.on("data", onData);
+    shellEvents.on("data", onData);
     shell.channel.on("close", onClose);
   });
 }
@@ -127,6 +150,7 @@ export function cleanShellsBySession(sessionId: string) {
       if (!shell.closed) {
         try { shell.channel.close(); } catch { /* ignore */ }
       }
+      disposeTerminalWhenFlushed(shell);
       shells.delete(id);
       shellEvents.emit("close", id);
     }
@@ -168,6 +192,16 @@ export function writeInputToShell(shellId: string, data: string) {
   return false;
 }
 
+export function resizeShell(shellId: string, cols: number, rows: number): boolean {
+  const shell = shells.get(shellId);
+  if (!shell || shell.closed) return false;
+  const safeCols = Math.max(2, Math.min(500, Math.floor(cols)));
+  const safeRows = Math.max(1, Math.min(200, Math.floor(rows)));
+  shell.channel.setWindow(safeRows, safeCols, 0, 0);
+  shell.terminalView.resize(safeCols, safeRows);
+  return true;
+}
+
 export function listActiveShells() {
   const result: { id: string; sessionId: string; closed: boolean; age: number; keepAlive: boolean }[] = [];
   for (const shell of shells.values()) {
@@ -200,8 +234,11 @@ export function hasActiveShells(sessionId: string): boolean {
 
 export async function handleShellCreate(args: SshShellArgs) {
   let session = getSession(args.sessionId);
-  if (!session || session.type !== "ssh") {
+  if (!session) {
     return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' not found` }], isError: true };
+  }
+  if (session.type !== "ssh") {
+    return { content: [{ type: "text" as const, text: `Error: Session '${args.sessionId}' is not an SSH session` }], isError: true };
   }
 
   // Attempt auto-reconnect if client is not connected
@@ -250,8 +287,13 @@ export async function handleShellCreate(args: SshShellArgs) {
         buffer: "",
         closed: false,
         createdAt: Date.now(),
-        readCursor: 0,
         keepAlive: !!args.keepAlive,
+        terminalView: new TerminalView(cols, rows),
+        semanticBaseline: [],
+        lastInput: "",
+        lastInputEchoPrefix: "",
+        parseQueue: Promise.resolve(),
+        terminalDisposeScheduled: false,
       };
 
       // Heartbeat to prevent TMOUT (inactivity timeout)
@@ -275,11 +317,10 @@ export async function handleShellCreate(args: SshShellArgs) {
           try { touchSession(args.sessionId); } catch {}
         }).catch(() => {});
         const str = data.toString("utf-8");
-        appendBuffer(shell, str);
+        appendBuffer(shell, data);
         shell.wsClients?.forEach(ws => {
           if (ws.readyState === 1) ws.send(str);
         });
-        shellEvents.emit("data", shellId);
       });
 
       channel.stderr.on("data", (data: Buffer) => {
@@ -287,11 +328,10 @@ export async function handleShellCreate(args: SshShellArgs) {
           try { touchSession(args.sessionId); } catch {}
         }).catch(() => {});
         const str = data.toString("utf-8");
-        appendBuffer(shell, str);
+        appendBuffer(shell, data);
         shell.wsClients?.forEach(ws => {
           if (ws.readyState === 1) ws.send(str);
         });
-        shellEvents.emit("data", shellId);
       });
 
       channel.on("close", () => {
@@ -303,9 +343,11 @@ export async function handleShellCreate(args: SshShellArgs) {
         shell.wsClients?.forEach(ws => {
           if (ws.readyState === 1) ws.send("\r\n[Shell session closed]\r\n");
         });
-        // Emit one last data event so subscribers read the CLOSED state, then emit close
-        shellEvents.emit("data", shellId);
-        shellEvents.emit("close", shellId);
+        // Emit after all pending bytes have been interpreted by the virtual terminal.
+        void shell.parseQueue.finally(() => {
+          shellEvents.emit("data", shellId);
+          shellEvents.emit("close", shellId);
+        });
       });
 
       channel.on("error", (err: Error) => {
@@ -317,6 +359,9 @@ export async function handleShellCreate(args: SshShellArgs) {
 
       // Small delay to capture the shell prompt
       setTimeout(() => {
+        void shell.parseQueue.then(() => {
+          const snapshot = shell.terminalView.snapshot();
+          shell.semanticBaseline = snapshot.historyLines;
         resolve({
           content: [{
             type: "text" as const,
@@ -324,9 +369,10 @@ export async function handleShellCreate(args: SshShellArgs) {
               `Interactive shell created: ${shellId}`,
               `  Session: ${args.sessionId}`,
               `  Terminal: ${term} ${cols}x${rows}`,
-              shell.buffer ? `\n${shell.buffer}` : "",
+              snapshot.screenLines.length ? `\n${snapshot.screenLines.join("\n")}` : "",
             ].filter(Boolean).join("\n"),
           }],
+        });
         });
       }, 300);
     });
@@ -347,6 +393,10 @@ export async function handleShellWrite(args: SshShellWriteArgs) {
   if (shell.closed) {
     return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' is closed` }], isError: true };
   }
+
+  await shell.parseQueue;
+  const beforeWrite = shell.terminalView.snapshot();
+  shell.semanticBaseline = beforeWrite.historyLines;
 
   let input = args.input || "";
   
@@ -369,19 +419,15 @@ export async function handleShellWrite(args: SshShellWriteArgs) {
     }
   }
 
+  shell.lastInput = input;
+  shell.lastInputEchoPrefix = beforeWrite.historyLines.at(-1) ?? "";
+
   return new Promise<ToolResult>((resolve) => {
-    // Capture the buffer length before the write, so any data arriving between
-    // now and the callback is treated as output from this command.
-    const preWriteLen = shell.buffer.length;
-    
     shell.channel.stdin.write(input, "utf-8", (err: Error | null | undefined) => {
       if (err) {
         resolve({ content: [{ type: "text" as const, text: `Error writing to shell: ${err.message}` }], isError: true });
         return;
       }
-      // Advance cursor past pre-existing data so subsequent reads only see
-      // output produced after this write was queued.
-      shell.readCursor = Math.max(shell.readCursor, preWriteLen);
       resolve({
         content: [{
           type: "text" as const,
@@ -406,52 +452,63 @@ export async function handleShellRead(args: SshShellReadArgs) {
   // Optional: wait for output to settle or for a specific pattern
   const waitMs = args.waitMs ?? 0;
   if ((waitMs > 0 || args.expect) && !shell.closed && !args.peek) {
-    await waitForQuiet(shell, waitMs, args.maxWaitMs, args.expect);
+    await waitForQuiet(shell, waitMs, args.maxWaitMs ?? (args.expect ? 30_000 : undefined), args.expect);
   }
 
-  const start = args.peek ? 0 : shell.readCursor;
-  let output = shell.buffer.slice(start);
-  const maxLen = args.maxLength ?? 50000;
-  
-  if (args.stripAnsi) {
-    output = stripAnsi(output);
+  await shell.parseQueue;
+  const snapshot = shell.terminalView.snapshot();
+  let outputLines = args.peek
+    ? snapshot.historyLines
+    : semanticDelta(shell.semanticBaseline, snapshot.historyLines);
+  let inputEcho: string[] = [];
+  let programLines = outputLines;
+  if (!args.peek) {
+    const separated = separateInputEcho(outputLines, shell.lastInput, shell.lastInputEchoPrefix);
+    inputEcho = separated.inputEcho;
+    programLines = separated.programLines;
   }
+  const maxLen = Math.max(1, Math.min(args.maxLength ?? 50_000, 1_000_000));
 
-  // Handle tailLines snapshot with performance optimization
+  // ANSI and control characters have already been interpreted by TerminalView.
   if (args.tailLines && args.tailLines > 0) {
-    // If output is large, take only the last ~128KB to avoid splitting a huge string
-    const CHUNK_SIZE = 128 * 1024;
-    const tailChunk = output.length > CHUNK_SIZE ? output.slice(-CHUNK_SIZE) : output;
-    const lines = tailChunk.split(/\r?\n/);
-    if (lines.length > args.tailLines) {
-      output = lines.slice(-args.tailLines).join("\n");
-    } else {
-      // If the last 128KB has fewer lines than requested, we might need the whole thing, 
-      // but usually 128KB is plenty for any reasonable tailLines value.
-      output = lines.slice(-args.tailLines).join("\n");
-    }
+    outputLines = outputLines.slice(-args.tailLines);
+    programLines = programLines.slice(-args.tailLines);
   }
+
+  const output = outputLines.join("\n");
+  const programOutput = programLines.join("\n");
 
   const truncated = output.length > maxLen;
   const text = truncated ? output.slice(-maxLen) : output;
+  const programOutputTruncated = programOutput.length > maxLen;
+  const programText = programOutputTruncated ? programOutput.slice(-maxLen) : programOutput;
 
   if ((args.clear ?? false) && !args.peek) {
     shell.buffer = "";
-    shell.readCursor = 0;
+    shell.semanticBaseline = snapshot.historyLines;
+    shell.lastInput = "";
+    shell.lastInputEchoPrefix = "";
   }
 
-  // Heuristic for prompt detection (strip ANSI before checking)
-  const cleanTail = stripAnsi(text.slice(-100));
-  const promptShown = /[:\w\s~.-]+[@\w\s~.-]+[#$>]\s*$/.test(cleanTail);
+  const screen = snapshot.screenLines.join("\n");
+  const promptShown = /[:\w\s~.-]+[@\w\s~.-]+[#$>]\s*$/.test(screen.slice(-100));
 
   const result = {
     shellId: args.shellId,
     status: shell.closed ? "CLOSED" : "OPEN",
+    renderMode: "terminal-screen",
+    bufferType: snapshot.bufferType,
+    dimensions: { cols: snapshot.cols, rows: snapshot.rows },
+    cursor: snapshot.cursor,
     promptShown,
     bufferSize: shell.buffer.length,
     unreadSize: output.length,
     truncated,
-    content: text || "(no output)"
+    content: text || "(no visible terminal changes)",
+    inputEcho,
+    programOutput: programText,
+    programOutputTruncated,
+    screen,
   };
 
   return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
@@ -469,7 +526,7 @@ export async function handleShellResize(args: SshShellResizeArgs) {
   const cols = args.cols ?? 120;
   const rows = args.rows ?? 30;
 
-  shell.channel.setWindow(rows, cols, 0, 0);
+  resizeShell(args.shellId, cols, rows);
   return {
     content: [{
       type: "text" as const,
@@ -501,6 +558,7 @@ export async function handleShellClose(args: SshShellCloseArgs) {
   if (shell.heartbeatTimer) {
     clearInterval(shell.heartbeatTimer);
   }
+  disposeTerminalWhenFlushed(shell);
   shells.delete(args.shellId);
   shellEvents.emit("close", args.shellId);
   globalEvents.emit("shells_changed");
@@ -522,4 +580,23 @@ export async function handleShellList() {
     return `  ${s.id}  session: ${s.sessionId}  ${s.closed ? "CLOSED" : "OPEN"}  (${age}s ago)`;
   });
   return { content: [{ type: "text" as const, text: `Interactive shells:\n${lines.join("\n")}` }] };
+}
+
+export function closeAllShells(): void {
+  for (const [shellId, shell] of shells) {
+    if (shell.heartbeatTimer) clearInterval(shell.heartbeatTimer);
+    if (shell.wsClients) {
+      for (const ws of shell.wsClients) {
+        try { ws.close(1001, "SSH-MCP Desktop is shutting down"); } catch {}
+      }
+      shell.wsClients.clear();
+    }
+    if (!shell.closed) {
+      try { shell.channel.close(); } catch {}
+    }
+    disposeTerminalWhenFlushed(shell);
+    shellEvents.emit("close", shellId);
+  }
+  shells.clear();
+  globalEvents.emit("shells_changed");
 }

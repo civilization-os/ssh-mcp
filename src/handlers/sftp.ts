@@ -29,9 +29,11 @@ function withSftp<T>(client: Client, timeoutMs: number, fn: (sftp: import("ssh2"
       
       // Cache it to avoid ~1s channel creation overhead per request
       (client as any)._sftp = sftp;
-      sftp.on('end', () => { (client as any)._sftp = undefined; });
-      sftp.on('error', () => { (client as any)._sftp = undefined; });
-      sftp.on('close', () => { (client as any)._sftp = undefined; });
+      if (typeof (sftp as any).on === "function") {
+        sftp.on("end", () => { (client as any)._sftp = undefined; });
+        sftp.on("error", () => { (client as any)._sftp = undefined; });
+        sftp.on("close", () => { (client as any)._sftp = undefined; });
+      }
 
       fn(sftp).finally(() => {
         clearTimeout(timer);
@@ -230,7 +232,7 @@ export async function handleMkdir(args: SshFileMkdirArgs) {
 
   globalEvents.emit("sftp_changed", { sessionId: args.sessionId, path: args.path });
 
-  return { content: [{ type: "text" as const, text: `Created directory: ${args.path}` }] };
+  return { content: [{ type: "text" as const, text: `Directory created: ${args.path}` }] };
 }
 
 // --- Chmod ---

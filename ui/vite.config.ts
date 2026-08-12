@@ -7,12 +7,13 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      injectRegister: null,
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg'],
       manifest: {
-        name: 'SSH-MCP Dashboard',
+        name: 'SSH-MCP Desktop',
         short_name: 'SSH-MCP',
-        description: 'Web Dashboard for SSH-MCP Server',
+        description: 'Desktop-controlled SSH and MCP workspace',
         theme_color: '#0f172a',
         background_color: '#0f172a',
         display: 'standalone',

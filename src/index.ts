@@ -2,7 +2,6 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { spawn } from "child_process";
 import { WebSocket } from "ws";
 import {
   CallToolRequestSchema,
@@ -15,65 +14,43 @@ import {
   McpError,
   ErrorCode,
 } from "@modelcontextprotocol/sdk/types.js";
-import path from "path";
-import { fileURLToPath } from "url";
-import fs from "fs";
-
-const DAEMON_PORT = 12222;
-const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
+import {
+  getDesktopAuthorizationHeaders,
+  getDesktopDaemonUrl,
+  readDesktopRuntimeState,
+  registerDesktopBridge,
+  requireEnabledDesktopRuntime,
+} from "./desktopRuntime.js";
 
 const server = new Server(
-  { name: "ssh-mcp", version: "2.2.0" },
-  { capabilities: { tools: {}, resources: { subscribe: true } } }
+  { name: "ssh-mcp-desktop", version: "2.5.0" },
+  {
+    capabilities: {
+      tools: { listChanged: true },
+      resources: { subscribe: true, listChanged: true },
+    },
+  }
 );
 
-async function ensureDaemonRunning() {
-  try {
-    const res = await fetch(`${DAEMON_URL}/api/version`);
-    if (res.ok) return true;
-  } catch {}
-
-  console.error(`[MCP Proxy] Daemon not running on port ${DAEMON_PORT}. Attempting to start...`);
-  
-  const selfPath = process.argv[1]
-    ? path.resolve(process.argv[1])
-    : path.join(path.dirname(fileURLToPath(import.meta.url)), "index.js");
-  const daemonPath = path.join(path.dirname(selfPath), "daemon.js");
-  
-  if (!fs.existsSync(daemonPath)) {
-    console.error(`[MCP Proxy] Daemon script not found at ${daemonPath}`);
-    return false;
+function runtimeRequest(pathname: string, init: RequestInit = {}): Promise<Response> {
+  const runtime = requireEnabledDesktopRuntime();
+  const headers = new Headers(init.headers);
+  for (const [name, value] of Object.entries(getDesktopAuthorizationHeaders(runtime))) {
+    headers.set(name, value);
   }
-
-  const child = spawn(process.execPath, [daemonPath], {
-    detached: true,
-    stdio: "ignore",
-    env: process.env
-  });
-  
-  child.unref();
-
-  for (let i = 0; i < 20; i++) {
-    await new Promise(r => setTimeout(r, 500));
-    try {
-      if ((await fetch(`${DAEMON_URL}/api/version`)).ok) {
-        console.error(`[MCP Proxy] Daemon successfully started.`);
-        return true;
-      }
-    } catch {}
-  }
-  
-  console.error(`[MCP Proxy] Failed to start daemon.`);
-  return false;
+  return fetch(`${getDesktopDaemonUrl(runtime)}${pathname}`, { ...init, headers });
 }
 
 server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+  if (!readDesktopRuntimeState()?.mcpEnabled) {
+    return { resourceTemplates: [] };
+  }
   return {
     resourceTemplates: [
       {
         uriTemplate: "mcp://ssh/shell/{shellId}/output",
         name: "Interactive Shell Output Stream",
-        description: "Real-time incremental output and status from a PTY shell session",
+        description: "Terminal-rendered screen, incremental visible text, cursor, and status from a PTY shell session",
         mimeType: "application/json",
       }
     ],
@@ -81,8 +58,11 @@ server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
 });
 
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  if (!readDesktopRuntimeState()?.mcpEnabled) {
+    return { resources: [] };
+  }
   try {
-    const res = await fetch(`${DAEMON_URL}/api/mcp/resources`);
+    const res = await runtimeRequest("/api/mcp/resources");
     if (!res.ok) throw new Error("Daemon error");
     return await res.json() as any;
   } catch (err: any) {
@@ -92,7 +72,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
 
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   try {
-    const res = await fetch(`${DAEMON_URL}/api/mcp/resource?uri=${encodeURIComponent(request.params.uri)}`);
+    const res = await runtimeRequest(`/api/mcp/resource?uri=${encodeURIComponent(request.params.uri)}`);
     if (!res.ok) throw new Error("Daemon error");
     return await res.json() as any;
   } catch (err: any) {
@@ -112,8 +92,16 @@ server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
   return {};
 });
 
+let daemonEventsSocket: WebSocket | null = null;
+
 function connectDaemonEvents() {
-  const ws = new WebSocket(`ws://127.0.0.1:${DAEMON_PORT}/ws/mcp-events`);
+  const runtime = readDesktopRuntimeState();
+  if (!runtime?.mcpEnabled || daemonEventsSocket) return;
+
+  const ws = new WebSocket(`ws://127.0.0.1:${runtime.port}/ws/mcp-events`, {
+    headers: getDesktopAuthorizationHeaders(runtime),
+  });
+  daemonEventsSocket = ws;
   
   ws.on("open", () => {
     // connected
@@ -132,11 +120,11 @@ function connectDaemonEvents() {
   });
 
   ws.on("close", () => {
-    setTimeout(connectDaemonEvents, 2000);
+    daemonEventsSocket = null;
   });
   
   ws.on("error", () => {
-    // ignore
+    // The runtime watcher reconnects when the Desktop app is available.
   });
 }
 
@@ -150,8 +138,7 @@ const authFields = {
   timeout: { type: "number" as const, description: "Operation timeout in milliseconds (default: 30000)", default: 30000 },
 };
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
+const TOOL_CATALOG = [
     {
       name: "ssh_connect",
       description: "Create a persistent SSH session or reconnect to an existing one. To reconnect seamlessly, simply pass ONLY the 'sessionId' (credentials will be automatically restored from the saved session). Returns a sessionId that can be reused by other tools.",
@@ -362,7 +349,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "ssh_shell_read",
-      description: "Read buffered output from an interactive shell. By default this returns the output accumulated since the last write; repeated reads return the same incremental window until the next write or clear. Use peek=true to get the current full buffer snapshot. Returns a JSON object. NOTE: This is a polling-based read. For real-time streaming, please use the resource 'mcp://ssh/shell/{shellId}/output'.",
+      description: "Read an interactive shell as a rendered terminal, not as raw control characters. Carriage returns, backspace, tabs, ANSI erase/cursor movement, alternate screens, and wide characters are applied before output is returned. By default content contains all visible changes since the last write, inputEcho identifies echoed MCP input, and programOutput excludes that echo. expect only matches programOutput, so a marker embedded in an echoed command cannot complete the wait early. peek=true returns rendered scrollback. The response also includes the current screen, row/column cursor, dimensions, and truncation state.",
       inputSchema: {
         type: "object",
         properties: {
@@ -370,10 +357,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           maxLength: { type: "number", description: "Max bytes to return (default: 50000, reads from end of the current incremental window or snapshot)" },
           clear: { type: "boolean", description: "Clear the full buffer and reset the incremental window after reading (default: false)" },
           waitMs: { type: "number", description: "Wait for N ms of silence before returning (e.g. 500 = wait until output stops)" },
-          maxWaitMs: { type: "number", description: "Maximum total time to wait in ms, even if output is still flowing" },
+          maxWaitMs: { type: "number", description: "Maximum total time to wait in ms, even if output is still flowing (defaults to 30000 when expect is used)" },
           peek: { type: "boolean", description: "Return the current full buffer snapshot immediately without advancing the read cursor" },
-          stripAnsi: { type: "boolean", description: "Remove ANSI escape codes from the output (default: false)" },
-          expect: { type: "string", description: "Wait until this regex pattern appears in the output (replaces waitMs if it matches early)" },
+          stripAnsi: { type: "boolean", description: "Deprecated compatibility option; terminal control sequences are always interpreted and never returned raw" },
+          expect: { type: "string", description: "Wait until this regex pattern appears in program output, excluding echoed MCP input (replaces waitMs if it matches early)" },
           tailLines: { type: "number", description: "Only return the last N lines of the current incremental window or snapshot" },
         },
         required: ["shellId"],
@@ -408,18 +395,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "List all active interactive shell sessions.",
       inputSchema: { type: "object", properties: {} },
     },
-  ],
+];
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: readDesktopRuntimeState()?.mcpEnabled ? TOOL_CATALOG : [],
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   try {
-    const res = await fetch(`${DAEMON_URL}/api/mcp/tool`, {
+    const res = await runtimeRequest("/api/mcp/tool", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, args })
     });
-    
+
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => null) as { error?: string } | null;
+      throw new Error(errorBody?.error || `Desktop daemon returned HTTP ${res.status}`);
+    }
     const result = await res.json();
     return result as any;
   } catch (err: any) {
@@ -427,12 +421,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-async function main() {
-  await ensureDaemonRunning();
-  connectDaemonEvents();
+let lastRuntimeSignature = "";
+let unregisterBridge: (() => void) | null = null;
 
+function syncDesktopRuntime() {
+  const runtime = readDesktopRuntimeState();
+  const signature = runtime
+    ? `${runtime.pid}:${runtime.port}:${runtime.token}:${runtime.mcpEnabled}`
+    : "offline";
+
+  if (lastRuntimeSignature && signature !== lastRuntimeSignature) {
+    void server.sendToolListChanged().catch(() => {});
+    void server.sendResourceListChanged().catch(() => {});
+  }
+
+  if (lastRuntimeSignature && signature === "offline") {
+    unregisterBridge?.();
+    process.exit(0);
+  }
+
+  if (signature !== lastRuntimeSignature && daemonEventsSocket) {
+    daemonEventsSocket.close();
+    daemonEventsSocket = null;
+  }
+
+  lastRuntimeSignature = signature;
+  if (runtime?.mcpEnabled) connectDaemonEvents();
+}
+
+async function main() {
+  const initialRuntime = readDesktopRuntimeState();
+  if (!initialRuntime) {
+    throw new Error("SSH-MCP Desktop is not running. Start the Desktop app before connecting this MCP server.");
+  }
+  unregisterBridge = registerDesktopBridge(initialRuntime);
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  syncDesktopRuntime();
+  const runtimeTimer = setInterval(syncDesktopRuntime, 1000);
+  runtimeTimer.unref();
 }
 
 main().catch((err) => {

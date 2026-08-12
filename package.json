@@ -1,23 +1,35 @@
 {
   "name": "ssh-mcp",
-  "version": "2.2.2",
-  "description": "MCP server for SSH remote execution",
+  "version": "2.5.0",
+  "description": "Desktop-controlled MCP runtime for human-supervised SSH operations",
+  "author": "civilization-os contributors",
   "type": "module",
-  "main": "build/index.js",
+  "main": "desktop-dist/main.js",
   "bin": {
     "ssh-mcp": "build/index.js"
   },
   "scripts": {
-    "build": "node -e \"fs.rmSync('build', { recursive: true, force: true })\" && npm run build:ui && tsc",
-    "build:ui": "cd ui && npm install && npm run build",
-    "start": "node build/index.js",
+    "clean": "node -e \"for (const dir of ['build','desktop-dist']) fs.rmSync(dir, { recursive: true, force: true })\"",
+    "build": "npm run clean && npm run build:ui && npm run build:server && npm run build:desktop",
+    "build:ui": "npm --prefix ui install && npm --prefix ui run build",
+    "build:server": "tsc -p tsconfig.json",
+    "build:desktop": "tsc -p desktop/tsconfig.json",
+    "start": "npm run desktop:dev",
     "dev": "tsc --watch",
+    "desktop:dev": "npm run build && electron .",
+    "desktop:pack": "npm run build && electron-builder --dir --win",
+    "desktop:dist": "npm run build && electron-builder --win nsis --publish never",
+    "desktop:publish": "npm run build && electron-builder --win nsis --publish always",
+    "mcp:bridge": "node build/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p desktop/tsconfig.json --noEmit && npm --prefix ui exec -- tsc -p ui/tsconfig.app.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
+    "@xterm/headless": "^6.0.0",
+    "electron-updater": "^6.8.9",
     "sirv": "^3.0.0",
     "ssh2": "^1.16.0",
     "ws": "^8.21.0"
@@ -27,8 +39,13 @@
     "@types/ssh2": "^1.15.0",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.10",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=20.19.0"
   },
   "files": [
     "build",

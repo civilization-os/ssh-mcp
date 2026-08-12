@@ -1,0 +1,63 @@
+appId: io.civilization.sshmcp.desktop
+productName: SSH-MCP Desktop
+copyright: Copyright © 2026 civilization-os contributors
+
+directories:
+  output: release
+  buildResources: desktop/resources
+
+files:
+  - build/**/*
+  - desktop-dist/**/*
+  - ui/dist/**/*
+  - package.json
+  - node_modules/**/*
+
+extraFiles:
+  - from: desktop/bridge/ssh-mcp-bridge.cmd
+    to: ssh-mcp-bridge.cmd
+
+extraResources:
+  - from: desktop/resources/icon.png
+    to: icon.png
+
+asar: true
+compression: maximum
+npmRebuild: false
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: desktop/resources/icon.ico
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+  requestedExecutionLevel: asInvoker
+  verifyUpdateCodeSignature: true
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: SSH-MCP Desktop
+  uninstallDisplayName: SSH-MCP Desktop
+  installerIcon: desktop/resources/icon.ico
+  uninstallerIcon: desktop/resources/icon.ico
+  installerHeaderIcon: desktop/resources/icon.ico
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  differentialPackage: true
+  include: desktop/installer/installer.nsh
+  installerLanguages:
+    - en_US
+    - zh_CN
+  language: 2052
+
+publish:
+  provider: github
+  owner: civilization-os
+  repo: ssh-mcp
+  releaseType: release

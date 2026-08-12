@@ -7,9 +7,13 @@ import crypto from "crypto";
 import { globalEvents } from "./eventBus.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SESSIONS_STORE_PATH = path.join(__dirname, "..", "sessions-store.json");
-const SESSIONS_META_PATH = path.join(__dirname, "..", "sessions-meta.json");
-const ENCRYPTION_KEY_PATH = path.join(__dirname, "..", ".mcp-key");
+const DATA_DIRECTORY = process.env.SSH_MCP_DATA_DIR?.trim()
+  ? path.resolve(process.env.SSH_MCP_DATA_DIR.trim())
+  : path.join(__dirname, "..");
+fs.mkdirSync(DATA_DIRECTORY, { recursive: true });
+const SESSIONS_STORE_PATH = path.join(DATA_DIRECTORY, "sessions-store.json");
+const SESSIONS_META_PATH = path.join(DATA_DIRECTORY, "sessions-meta.json");
+const ENCRYPTION_KEY_PATH = path.join(DATA_DIRECTORY, ".mcp-key");
 
 export const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 min
@@ -612,4 +616,25 @@ export async function resolveClient(
   return fn(client).finally(() => {
     try { client.end(); } catch {}
   });
+}
+
+export async function shutdownAllSessions(): Promise<void> {
+  try {
+    const { closeAllShells } = await import("./handlers/shell.js");
+    closeAllShells();
+  } catch {}
+
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+  }
+
+  saveSessionMeta();
+  for (const session of sessions.values()) {
+    if (session.client) {
+      session.client.removeAllListeners();
+      try { session.client.end(); } catch {}
+      session.client = undefined;
+    }
+  }
 }

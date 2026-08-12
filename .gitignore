@@ -8,3 +8,5 @@ sessions-meta.json
 coverage/
 .mcp-key
 .reasonix/
+desktop-dist/
+release/

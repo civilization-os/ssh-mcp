@@ -9,7 +9,8 @@ import {
   attachWsToShell,
   detachWsFromShell,
   writeInputToShell,
-  listActiveShells
+  listActiveShells,
+  resizeShell,
 } from "./handlers/shell.js";
 import { globalEvents } from "./eventBus.js";
 
@@ -23,6 +24,28 @@ export interface HttpServerStartResult {
   port: number;
   reused: boolean;
   server?: http.Server;
+  close?: () => Promise<void>;
+}
+
+const API_AUTH_TOKEN = process.env.SSH_MCP_AUTH_TOKEN?.trim() || "";
+let mcpAccessEnabled = process.env.SSH_MCP_ENABLED === "1";
+
+function isAuthorized(req: http.IncomingMessage): boolean {
+  if (!API_AUTH_TOKEN) return true;
+  return req.headers.authorization === `Bearer ${API_AUTH_TOKEN}`;
+}
+
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  try {
+    const parsed = new URL(origin);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
 }
 
 let SERVER_VERSION = "2.1.2";
@@ -81,24 +104,68 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
   let retryCount = 0;
 
   const server = http.createServer(async (req, res) => {
-    // ... rest of the handler remains the same ...
-    // (I will keep the existing handler code inside this block)
-    // Add CORS headers for Vite/frontend development
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    const url = new URL(req.url || "", `http://localhost:${currentPort}`);
+    const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+
+    if (origin && !isAllowedOrigin(origin)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Origin is not allowed" }));
+      return;
+    }
+
+    if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
     if (req.method === "OPTIONS") {
-      res.writeHead(200);
+      res.writeHead(204);
       res.end();
       return;
     }
 
-    const url = new URL(req.url || "", `http://localhost:${currentPort}`);
-
     if (url.pathname === "/api/version" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ version: SERVER_VERSION }));
+      res.end(JSON.stringify({ version: SERVER_VERSION, desktopManaged: Boolean(API_AUTH_TOKEN) }));
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/") && !isAuthorized(req)) {
+      res.writeHead(401, { "Content-Type": "application/json", "WWW-Authenticate": "Bearer" });
+      res.end(JSON.stringify({ error: "Desktop authorization required" }));
+      return;
+    }
+
+    if (url.pathname === "/api/desktop/mcp-state" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ enabled: mcpAccessEnabled }));
+      return;
+    }
+
+    if (url.pathname === "/api/desktop/mcp-state" && req.method === "POST") {
+      let body = "";
+      req.on("data", chunk => {
+        if (body.length < 16 * 1024) body += chunk;
+      });
+      req.on("end", () => {
+        try {
+          const payload = JSON.parse(body) as { enabled?: unknown };
+          if (typeof payload.enabled !== "boolean") throw new Error("enabled must be a boolean");
+          mcpAccessEnabled = payload.enabled;
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ enabled: mcpAccessEnabled }));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Invalid request";
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: message }));
+        }
+      });
+      return;
+    }
+
+    if ((url.pathname.startsWith("/api/mcp/") || url.pathname === "/api/mcp/tool") && !mcpAccessEnabled) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "MCP access is disabled in SSH-MCP Desktop" }));
       return;
     }
 
@@ -106,8 +173,7 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*"
+        "Connection": "keep-alive"
       });
       res.write("retry: 3000\n\n");
 
@@ -639,8 +705,13 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
     }
 
     ws.on("message", (message) => {
-      // Forward text input to the shell
       const text = message.toString();
+      if (text.startsWith("\x01RS")) {
+        const match = text.match(/^\x01RS(\d+),(\d+)$/);
+        if (match) resizeShell(shellId, Number(match[1]), Number(match[2]));
+        return;
+      }
+      // Forward ordinary text input to the shell.
       writeInputToShell(shellId, text);
     });
 
@@ -681,11 +752,24 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
   // Upgrade HTTP connections to WebSocket
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "", `http://localhost:${currentPort}`);
+    const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
+
+    if (!isAllowedOrigin(origin) || !isAuthorized(request)) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
     if (url.pathname === "/ws/shell") {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);
       });
     } else if (url.pathname === "/ws/mcp-events") {
+      if (!mcpAccessEnabled) {
+        socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
       mcpWss.handleUpgrade(request, socket, head, (ws) => {
         mcpWss.emit("connection", ws, request);
       });
@@ -693,6 +777,19 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
       socket.destroy();
     }
   });
+
+  const closeServer = async () => {
+    for (const client of wss.clients) client.terminate();
+    for (const client of mcpWss.clients) client.terminate();
+    await Promise.all([
+      new Promise<void>(resolve => wss.close(() => resolve())),
+      new Promise<void>(resolve => mcpWss.close(() => resolve())),
+    ]);
+    await new Promise<void>(resolve => {
+      server.close(() => resolve());
+      server.closeAllConnections?.();
+    });
+  };
 
   return await new Promise<HttpServerStartResult>((resolve) => {
     server.on("error", async (err: any) => {
@@ -717,7 +814,7 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
 
     server.listen(currentPort, "127.0.0.1", () => {
       console.error(`[REST/WebSocket Server] Running at http://127.0.0.1:${currentPort}`);
-      resolve({ port: currentPort, reused: false, server });
+      resolve({ port: currentPort, reused: false, server, close: closeServer });
     });
   });
 }

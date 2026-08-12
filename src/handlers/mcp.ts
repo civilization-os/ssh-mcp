@@ -79,7 +79,7 @@ export async function handleMcpListResources() {
     resources.push({
       uri: `mcp://ssh/shell/${s.id}/output`,
       name: `Shell Output (${s.id})`,
-      description: `Output stream for shell ${s.id} (Session: ${s.sessionId})`,
+      description: `Terminal-rendered output for shell ${s.id} (Session: ${s.sessionId})`,
       mimeType: "application/json",
     });
   });

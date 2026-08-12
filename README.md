@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-007ACC.svg)](https://www.typescriptlang.org/)
-[![Node](https://img.shields.io/badge/Node-%3E%3D18-339933.svg)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/Node-%3E%3D20.19-339933.svg)](https://nodejs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/civilization-os/ssh-mcp/pulls)
 [![MCP Server](https://img.shields.io/badge/MCP-Server-7C3AED.svg)](https://modelcontextprotocol.io)
 
@@ -31,7 +31,7 @@ For security, `ssh-mcp` keeps SSH passwords, private keys, and local kubeconfig 
 | **Session** | `ssh_connect`, `k8s_connect`, `ssh_disconnect`, `ssh_sessions` | Persistent SSH or local Kubernetes connection pool |
 | **SFTP** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Full file operations with recursive directory delete/chmod, mkdir -p support |
 | **Monitoring** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | OS info, process list sorted by CPU/memory, disk usage |
-| **Interactive Shell** | `ssh_shell`, `ssh_shell_read`, `ssh_shell_write`, `ssh_shell_resize`, `ssh_shell_close`, `ssh_shell_list` | Full PTY support with `expect` pattern matching, ANSI stripping, `tailLines` snapshots, `peek` reads, and `keepAlive` heartbeats |
+| **Interactive Shell** | `ssh_shell`, `ssh_shell_read`, `ssh_shell_write`, `ssh_shell_resize`, `ssh_shell_close`, `ssh_shell_list` | Shared PTY with terminal-semantic reads, `expect`, `tailLines`, `peek`, cursor position, and `keepAlive` heartbeats |
 | **Resources** | `mcp://ssh/shell/{shellId}/output`, `mcp://ssh/sessions`, `mcp://ssh/shells` | MCP resources for active session state and real-time shell output updates |
 | **Kubernetes** | `ssh_k8s_list_pods`, `ssh_k8s_pod_logs`, `ssh_k8s_pod_exec`, `ssh_k8s_pod_cp`, `ssh_k8s_arthas_attach` | Full pod management and Java diagnostics via Arthas. Supports local or remote execution. |
 
@@ -116,9 +116,11 @@ This console bundles:
 - **Stateful sessions**: Reuse the same SSH connection across multiple tool calls.
 - **Interactive PTY**: Continue input in long-running shell programs instead of executing isolated commands.
 - **Shell output streaming**: Subscribe to `mcp://ssh/shell/{shellId}/output` for real-time shell updates.
-- **`expect` matching**: `ssh_shell_read` can wait for a specific regex pattern, such as a prompt, before returning.
-- **ANSI stripping**: Optional stripping of terminal color codes to save tokens and improve AI readability.
-- **Read cursor / peek reads**: `ssh_shell_read` returns the output accumulated since the last `ssh_shell_write` by default; repeated reads keep the same incremental window until the next write or `clear: true`. Use `peek: true` for a full buffer snapshot.
+- **`expect` matching**: `ssh_shell_read` waits for a regex in program output only, so a completion marker inside the terminal's echoed command cannot match early.
+- **Terminal-semantic reads**: `ssh_shell_read` applies carriage returns, backspace, tabs, ANSI erase/cursor movement, alternate screens, and wide-character layout before returning text to the agent.
+- **Echo-aware output**: The full terminal remains visible in `content`, while `inputEcho` identifies echoed MCP input and `programOutput` excludes it for reliable automation.
+- **Shared terminal geometry**: App resize events update both the remote PTY and the headless terminal view, so the user and agent read the same row/column layout.
+- **Incremental / peek reads**: `ssh_shell_read` returns visible changes since the last `ssh_shell_write` by default; repeated reads keep the same semantic window until the next write or `clear: true`. Use `peek: true` for rendered scrollback.
 - **Keep-alive**: Optional heartbeats (`\x00`) to prevent `TMOUT` session disconnects on strict servers.
 
 ### MCP Configuration Examples
