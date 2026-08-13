@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { translations } from "./i18n";
 import type { Language } from "./i18n";
 
 const API_BASE = "";
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 interface SftpFile {
   name: string;
@@ -40,12 +44,12 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
   const fileCount = files.length - folderCount;
   const selectedFilePath = selectedFile ? `${path.endsWith("/") ? path : `${path}/`}${selectedFile.name}` : "";
 
-  const showStatus = (msg: string, type: "success" | "error") => {
+  const showStatus = useCallback((msg: string, type: "success" | "error") => {
     setStatus({ msg, type });
     setTimeout(() => setStatus({ msg: "", type: "" }), 3000);
-  };
+  }, []);
 
-  const loadFiles = async (targetPath: string) => {
+  const loadFiles = useCallback(async (targetPath: string) => {
     setLoading(true);
     setSelectedFile(null);
     try {
@@ -64,14 +68,17 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
       } else {
         showStatus(data.content?.[0]?.text || "Failed to load", "error");
       }
-    } catch (e) {
+    } catch {
       showStatus("Network error", "error");
     } finally {
       setLoading(false);
     }
-  };
+  }, [sessionId, showStatus]);
 
-  useEffect(() => { loadFiles("/"); }, [sessionId]);
+  useEffect(() => {
+    const initialLoad = window.setTimeout(() => void loadFiles("/"), 0);
+    return () => window.clearTimeout(initialLoad);
+  }, [loadFiles]);
 
   const handleRowDoubleClick = (file: SftpFile) => {
     if (file.type === "dir") {
@@ -109,8 +116,8 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
       if (data.isError) throw new Error(data.content?.[0]?.text);
       showStatus(`✓ ${t("sftpDeletedOk")}: ${file.name}`, "success");
       loadFiles(path);
-    } catch (e: any) {
-      showStatus(`✗ ${e.message}`, "error");
+    } catch (error: unknown) {
+      showStatus(`✗ ${errorMessage(error)}`, "error");
     }
   };
 
@@ -130,8 +137,8 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
       showStatus(`✓ ${t("sftpRenamedOk")}`, "success");
       setRenameTarget(null);
       loadFiles(path);
-    } catch (e: any) {
-      showStatus(`✗ ${e.message}`, "error");
+    } catch (error: unknown) {
+      showStatus(`✗ ${errorMessage(error)}`, "error");
     }
   };
 
@@ -150,8 +157,8 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
       setMkdirMode(false);
       setMkdirName("");
       loadFiles(path);
-    } catch (e: any) {
-      showStatus(`✗ ${e.message}`, "error");
+    } catch (error: unknown) {
+      showStatus(`✗ ${errorMessage(error)}`, "error");
     }
   };
 
@@ -171,8 +178,8 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
       a.click();
       URL.revokeObjectURL(url);
       showStatus(`✓ ${t("sftpDownloadOk")}: ${file.name}`, "success");
-    } catch (e: any) {
-      showStatus(`✗ ${e.message}`, "error");
+    } catch (error: unknown) {
+      showStatus(`✗ ${errorMessage(error)}`, "error");
     }
   };
 
@@ -192,8 +199,8 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
       if (data.isError) throw new Error(data.content?.[0]?.text);
       showStatus(`✓ ${t("sftpUploadOk")}: ${file.name}`, "success");
       loadFiles(path);
-    } catch (e: any) {
-      showStatus(`✗ ${e.message}`, "error");
+    } catch (error: unknown) {
+      showStatus(`✗ ${errorMessage(error)}`, "error");
     } finally {
       if (uploadRef.current) uploadRef.current.value = "";
     }

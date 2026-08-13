@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { type OnMount } from "@monaco-editor/react";
 
 interface EditorViewProps {
   sessionId: string;
@@ -14,7 +14,7 @@ export function EditorView({ sessionId, filePath, onClose }: EditorViewProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" | "" }>({ msg: "", type: "" });
-  const editorRef = useRef<any>(null);
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
   const showToast = (msg: string, type: "success" | "error") => {
     setToast({ msg, type });
@@ -32,8 +32,8 @@ export function EditorView({ sessionId, filePath, onClose }: EditorViewProps) {
         if (!res.ok) throw new Error("Failed to load file");
         const text = await res.text();
         setContent(text);
-      } catch (e: any) {
-        if (e.name === "AbortError") return;
+      } catch (error: unknown) {
+        if (error instanceof Error && error.name === "AbortError") return;
         showToast("加载文件失败", "error");
       } finally {
         if (!controller.signal.aborted) setLoading(false);
@@ -43,7 +43,7 @@ export function EditorView({ sessionId, filePath, onClose }: EditorViewProps) {
     return () => controller.abort();
   }, [sessionId, filePath]);
 
-  const handleEditorDidMount = (editor: any, monaco: any) => {
+  const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     
     // Add Ctrl+S / Cmd+S shortcut
@@ -71,7 +71,7 @@ export function EditorView({ sessionId, filePath, onClose }: EditorViewProps) {
       } else {
         throw new Error("Save failed");
       }
-    } catch (e) {
+    } catch {
       showToast("保存失败", "error");
     } finally {
       setSaving(false);

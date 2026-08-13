@@ -54,6 +54,7 @@ interface RendererDesktopState {
   desktop: true;
   version: string;
   port: number;
+  bridgePath: string;
   mcpEnabled: boolean;
   shuttingDown: boolean;
 }
@@ -289,6 +290,7 @@ function getRendererState(): RendererDesktopState {
     desktop: true,
     version: app.getVersion(),
     port: desktopPort,
+    bridgePath: path.join(path.dirname(process.execPath), "ssh-mcp-bridge.cmd"),
     mcpEnabled,
     shuttingDown,
   };
@@ -407,10 +409,16 @@ async function createMainWindow(): Promise<void> {
     minWidth: 1120,
     minHeight: 720,
     show: false,
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#0b131c",
     title: APP_NAME,
     icon: getWindowIconPath(),
     autoHideMenuBar: true,
+    titleBarStyle: "hidden",
+    titleBarOverlay: {
+      color: "#0b131c",
+      symbolColor: "#dce6ee",
+      height: 42,
+    },
     webPreferences: {
       preload: path.join(app.getAppPath(), "desktop-dist", "preload.cjs"),
       contextIsolation: true,

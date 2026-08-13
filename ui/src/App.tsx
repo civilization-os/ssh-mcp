@@ -9,6 +9,8 @@ import { MonitorView } from "./MonitorView";
 import { translations } from "./i18n";
 import type { Language } from "./i18n";
 import { DesktopSettingsControl } from "./DesktopSettings";
+import { McpSetupControl } from "./McpSetup";
+import { Activity, ChevronLeft, ChevronRight, FileText, Pencil, Plus, Server, ShieldCheck, TerminalSquare, Trash2 } from "lucide-react";
 
 interface SshSession {
   id: string;
@@ -33,12 +35,79 @@ interface ShellSession {
   keepAlive?: boolean;
 }
 
+interface SessionPayload {
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  privateKey?: string;
+}
+
 
 const API_BASE = "";
 const WS_BASE =
   typeof window === "undefined"
     ? "ws://127.0.0.1:12222"
     : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+
+function DesktopTitleBar({ lang, session }: { lang: Language; session: SshSession | null }) {
+  const [desktopState, setDesktopState] = useState<SshMcpDesktopState | null>(null);
+  const desktopApi = window.sshMcpDesktop;
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    let disposed = false;
+    void desktopApi.getState()
+      .then(state => { if (!disposed) setDesktopState(state); })
+      .catch(() => {});
+    const unsubscribe = desktopApi.onStateChanged(state => {
+      if (!disposed) setDesktopState(state);
+    });
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [desktopApi]);
+
+  if (!desktopApi) return null;
+
+  const mcpLabel = desktopState?.mcpEnabled
+    ? (lang === "zh" ? "MCP 已授权" : "MCP allowed")
+    : (lang === "zh" ? "MCP 已关闭" : "MCP blocked");
+  const contextLabel = session?.label || (lang === "zh" ? "本地控制面" : "Local control plane");
+  const contextMeta = session
+    ? `${session.username}@${session.host}:${session.port}`
+    : (lang === "zh" ? "APP 托管运行时" : "App-managed runtime");
+
+  return (
+    <header className="desktop-titlebar">
+      <div className="desktop-titlebar-safe-area">
+        <div className="desktop-titlebar-brand" translate="no">
+          <img src="/icon.svg" alt="" width="18" height="18" />
+          <span className="desktop-titlebar-wordmark"><strong>SSH</strong><i>/</i><strong>MCP</strong><em>DESKTOP</em></span>
+        </div>
+        <span className="desktop-titlebar-divider" aria-hidden="true" />
+        <div className={`desktop-titlebar-context ${session?.connected ? "is-online" : ""}`}>
+          <span className="desktop-titlebar-context-icon">
+            {session ? <Server size={12} aria-hidden="true" /> : <TerminalSquare size={12} aria-hidden="true" />}
+          </span>
+          <span className="desktop-titlebar-context-copy">
+            <strong>{contextLabel}</strong>
+            <small>{contextMeta}</small>
+          </span>
+        </div>
+        <div className="desktop-titlebar-runtime">
+          {desktopState?.version && <span className="desktop-titlebar-version">v{desktopState.version}</span>}
+        <div className={`desktop-titlebar-status ${desktopState?.mcpEnabled ? "is-enabled" : ""}`}>
+          <i aria-hidden="true" />
+          <span>{mcpLabel}</span>
+        </div>
+        </div>
+      </div>
+    </header>
+  );
+}
 
 function DesktopMcpControl({ collapsed, lang }: { collapsed: boolean; lang: Language }) {
   const [desktopState, setDesktopState] = useState<SshMcpDesktopState | null>(null);
@@ -131,62 +200,35 @@ function SessionItem({
   return (
     <div
       onClick={onSelect}
-      className="shadcn-card"
-      style={{
-        padding: "12px",
-        marginBottom: "8px",
-        cursor: "pointer",
-        backgroundColor: isSelected ? "hsl(var(--accent))" : "hsl(var(--card))",
-        borderColor: "hsl(var(--border))",
-        boxShadow: isSelected ? "0 1px 3px rgba(0,0,0,0.05)" : "none",
-        position: "relative"
-      }}
+      className={`session-card ${isSelected ? "is-selected" : ""}`}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>
-        <span style={{ fontWeight: 600, fontSize: "14px", color: isSelected ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>
-          {sess.label}
-        </span>
-        <div style={{ display: "flex", gap: "4px" }}>
+      <div className="session-card-head">
+        <span className="session-card-icon"><Server size={15} /></span>
+        <div className="session-card-title">
+          <strong>{sess.label}</strong>
+          <small>{sess.username}@{sess.host}:{sess.port}</small>
+        </div>
+        <div className="session-card-actions">
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
-            className="shadcn-btn shadcn-btn-ghost"
-            style={{ padding: "4px", height: "auto", minHeight: 0, fontSize: "12px" }}
+            aria-label={lang === "zh" ? "编辑服务器" : "Edit server"}
           >
-            ✎
+            <Pencil size={13} />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            className="shadcn-btn shadcn-btn-ghost"
-            style={{ padding: "4px", height: "auto", minHeight: 0, fontSize: "12px" }}
+            aria-label={lang === "zh" ? "删除服务器" : "Delete server"}
           >
-            ✕
+            <Trash2 size={13} />
           </button>
         </div>
       </div>
-      <div style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))" }}>
-        {sess.username}@{sess.host}
-      </div>
-      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
-        <span className="shadcn-badge">{sess.authType === "privateKey" ? translations[lang].authPrivateKeySaved : translations[lang].authPasswordSaved}</span>
-      </div>
-      <div style={{ 
-        fontSize: "10px", 
-        marginTop: "8px", 
-        color: "hsl(var(--foreground))",
-        display: "flex",
-        alignItems: "center",
-        gap: "6px"
-      }} title={sess.connected ? translations[lang].heartbeatTooltip : (lang === "zh" ? "连接已断开，需要重新编辑输入密码/密钥重新连接" : "Connection disconnected, needs credentials to reconnect")}>
-        <span className={sess.connected ? "pulse-glow" : ""} style={{ 
-          width: "6px", 
-          height: "6px", 
-          borderRadius: "50%", 
-          background: sess.connected ? "#22c55e" : "hsl(var(--destructive))",
-          display: "inline-block"
-        }} />
-        <span style={{ fontWeight: 500, color: sess.connected ? "hsl(var(--foreground))" : "hsl(var(--destructive))" }}>
+      <div className="session-card-foot" title={sess.connected ? translations[lang].heartbeatTooltip : (lang === "zh" ? "连接已断开，需要重新编辑输入密码/密钥重新连接" : "Connection disconnected, needs credentials to reconnect")}>
+        <span className={`session-health ${sess.connected ? "is-online" : ""}`}><i /></span>
+        <span>
           {sess.connected ? translations[lang].heartbeatActive + (pingMs != null ? ` (${pingMs}ms)` : "") : (lang === "zh" ? "已断开" : "Disconnected")}
         </span>
+        <em>{sess.authType === "privateKey" ? (lang === "zh" ? "KEY" : "KEY") : (lang === "zh" ? "PWD" : "PWD")}</em>
       </div>
     </div>
   );
@@ -196,7 +238,7 @@ export default function App() {
   const [sessions, setSessions] = useState<SshSession[]>([]);
   const [shells, setShells] = useState<ShellSession[]>([]);
   const [pingMs, setPingMs] = useState<number | null>(null);
-  const [serverVersion, setServerVersion] = useState<string>("2.1.0");
+  const [serverVersion, setServerVersion] = useState<string>("—");
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const [activeShellId, setActiveShellId] = useState<string>("");
   
@@ -327,7 +369,7 @@ export default function App() {
     setConnectError("");
     try {
       const isEditing = Boolean(editingSessionId);
-      const payload: any = {
+      const payload: SessionPayload = {
         name: sessionNameInput || `${usernameInput}@${hostInput}:${portInput}`,
         host: hostInput,
         port: parseInt(portInput, 10) || 22,
@@ -367,9 +409,9 @@ export default function App() {
       setShowCreateModal(false);
       resetSessionForm();
       setSelectedSessionId(data.id);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setConnectError(err.message || "Connection failed");
+      setConnectError(err instanceof Error ? err.message : "Connection failed");
     } finally {
       setConnectLoading(false);
     }
@@ -408,14 +450,15 @@ export default function App() {
   const filteredShells = shells.filter(s => s.sessionId === selectedSessionId);
 
   return (
-    <div style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden", backgroundColor: "hsl(var(--background))" }}>
+    <>
+      <DesktopTitleBar lang={lang} session={sessions.find(session => session.id === selectedSessionId) ?? null} />
+      <div className={`app-shell ${window.sshMcpDesktop ? "has-desktop-titlebar" : ""}`}>
       {/* Sidebar */}
       <div 
+        className={`command-rail ${sidebarCollapsed ? "is-collapsed" : ""}`}
         style={{ 
           width: sidebarCollapsed ? "68px" : "300px", 
           minWidth: sidebarCollapsed ? "68px" : "300px", 
-          borderRight: "1px solid hsl(var(--border))", 
-          backgroundColor: "hsl(var(--card))",
           display: "flex", 
           flexDirection: "column", 
           height: "100%", 
@@ -425,47 +468,42 @@ export default function App() {
       >
         
         {/* Title Bar / Collapse Button */}
-        <div style={{ 
-          padding: sidebarCollapsed ? "18px 0" : "24px 20px", 
-          borderBottom: "1px solid hsl(var(--border))", 
+        <div className="command-rail-brand" style={{
+          padding: sidebarCollapsed ? "12px 0" : "12px 16px",
           display: "flex", 
           alignItems: "center", 
           justifyContent: "center",
-          height: "80px",
+          height: "62px",
           boxSizing: "border-box",
           position: "relative",
           width: "100%",
           flexShrink: 0
         }}>
           {/* Inner Title Container */}
-          <div style={{
+          <div className="command-rail-identity" style={{
             position: "absolute",
-            left: "20px",
-            width: "180px",
+            left: "16px",
+            width: "176px",
             display: "flex",
             alignItems: "center",
-            gap: "10px",
+            gap: "9px",
             opacity: sidebarCollapsed ? 0 : 1,
             transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
             pointerEvents: sidebarCollapsed ? "none" : "auto",
             overflow: "hidden",
             whiteSpace: "nowrap"
           }}>
-            <img src="/icon.svg" alt="" width="34" height="34" className="app-brand-icon" />
-            <div style={{ minWidth: 0 }}>
-              <h1 style={{ fontSize: "16px", margin: 0, fontWeight: 700, letterSpacing: "-0.02em", color: "hsl(var(--foreground))" }}>
-                {t("title")}
-              </h1>
-              <p style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))", marginTop: "4px" }}>
-                {t("subtitle")}
-              </p>
+            <span className="rail-workspace-mark"><Activity size={14} aria-hidden="true" /></span>
+            <div className="rail-workspace-copy">
+              <small>OPERATIONS</small>
+              <strong>{lang === "zh" ? "运维工作台" : "Operations workspace"}</strong>
             </div>
           </div>
 
           {/* Buttons Container */}
-          <div style={{
+          <div className="command-rail-controls" style={{
             position: "absolute",
-            right: sidebarCollapsed ? "16px" : "20px",
+            right: sidebarCollapsed ? "16px" : "16px",
             display: "flex",
             gap: "6px",
             alignItems: "center",
@@ -474,7 +512,7 @@ export default function App() {
             {!sidebarCollapsed && (
               <button
                 onClick={() => setLang(lang === "zh" ? "en" : "zh")}
-                className="shadcn-btn shadcn-btn-outline"
+                className="rail-language"
                 style={{
                   padding: "4px 8px",
                   fontSize: "11px",
@@ -485,7 +523,7 @@ export default function App() {
             )}
             <button
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="shadcn-btn shadcn-btn-ghost"
+              className="rail-collapse"
               style={{
                 width: "36px",
                 height: "36px",
@@ -494,17 +532,18 @@ export default function App() {
               }}
               title={sidebarCollapsed ? (lang === "zh" ? "展开菜单" : "Expand Menu") : (lang === "zh" ? "收起菜单" : "Collapse Menu")}
             >
-              {sidebarCollapsed ? "▶" : "◀"}
+              {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
             </button>
           </div>
         </div>
 
         <DesktopMcpControl collapsed={sidebarCollapsed} lang={lang} />
+        <McpSetupControl collapsed={sidebarCollapsed} lang={lang} />
         <DesktopSettingsControl collapsed={sidebarCollapsed} lang={lang} />
 
         {/* Tab Selection - Upgraded */}
         {selectedSessionId && (
-          <div style={{ 
+          <div className="rail-navigation" style={{
             padding: "8px 0", 
             borderBottom: "1px solid hsl(var(--border))", 
             display: "flex", 
@@ -515,18 +554,18 @@ export default function App() {
             position: "relative",
             flexShrink: 0
           }}>
-            {[
-              { id: "terminal", icon: "💻", label: t("tabTerminal") },
-              { id: "sftp",     icon: "📂", label: t("tabSftp") },
-              { id: "monitor",  icon: "📊", label: t("tabMonitor") }
-            ].map(tab => {
+            {([
+              { id: "terminal", icon: <TerminalSquare size={16} />, label: t("tabTerminal") },
+              { id: "sftp",     icon: <FileText size={16} />, label: t("tabSftp") },
+              { id: "monitor",  icon: <Activity size={16} />, label: t("tabMonitor") }
+            ] satisfies Array<{ id: "terminal" | "sftp" | "monitor"; icon: React.ReactNode; label: string }>).map(tab => {
               const isActive = activeTab === tab.id;
               return (
                 <div
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
+                  onClick={() => setActiveTab(tab.id)}
                   title={sidebarCollapsed ? tab.label : undefined}
-                  className="shadcn-btn"
+                  className={`rail-nav-item ${isActive ? "is-active" : ""}`}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -538,24 +577,10 @@ export default function App() {
                     fontSize: "13px",
                     fontWeight: isActive ? 600 : 500,
                     position: "relative",
-                    backgroundColor: isActive ? "hsl(var(--accent))" : "transparent",
-                    color: isActive ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
                     border: "none",
                     justifyContent: "flex-start",
                     overflow: "hidden",
                     whiteSpace: "nowrap"
-                  }}
-                  onMouseEnter={e => {
-                    if (!isActive) {
-                      e.currentTarget.style.backgroundColor = "hsl(var(--accent) / 0.5)";
-                      e.currentTarget.style.color = "hsl(var(--foreground))";
-                    }
-                  }}
-                  onMouseLeave={e => {
-                    if (!isActive) {
-                      e.currentTarget.style.backgroundColor = "transparent";
-                      e.currentTarget.style.color = "hsl(var(--muted-foreground))";
-                    }
                   }}
                 >
                   <div style={{ 
@@ -565,7 +590,7 @@ export default function App() {
                     width: "16px",
                     flexShrink: 0,
                   }}>
-                    <span style={{ fontSize: "14px" }}>{tab.icon}</span>
+                    {tab.icon}
                   </div>
                   
                   {/* Text Label */}
@@ -586,7 +611,7 @@ export default function App() {
         )}
 
         {/* Sessions Section */}
-        <div style={{ 
+        <div className="rail-content" style={{
           flex: 1, 
           overflow: "hidden", 
           opacity: sidebarCollapsed ? 0 : 1,
@@ -594,14 +619,14 @@ export default function App() {
           transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
           pointerEvents: sidebarCollapsed ? "none" : "auto"
         }}>
-          <div style={{ width: "300px", padding: "16px 12px", height: "100%", overflowY: "auto", boxSizing: "border-box" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", paddingLeft: "8px" }}>
-            <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "hsl(var(--muted-foreground))", letterSpacing: "1.5px" }}>
+          <div className="rail-scroll" style={{ width: "300px", padding: "16px 12px", height: "100%", overflowY: "auto", boxSizing: "border-box" }}>
+          <div className="rail-section-heading">
+            <div>
               {t("sessionsTitle")} ({sessions.length})
             </div>
             <button
               onClick={openCreateModal}
-              className="shadcn-btn shadcn-btn-outline"
+              className="rail-add-button"
               style={{
                 width: "24px",
                 height: "24px",
@@ -610,12 +635,12 @@ export default function App() {
               }}
               title={t("connectNewSession")}
             >
-              +
+              <Plus size={14} />
             </button>
           </div>
           
           {sessions.length === 0 ? (
-            <div style={{ padding: "16px 8px", fontSize: "13px", color: "var(--text-secondary)", textAlign: "center" }}>
+            <div className="rail-empty-state">
               {t("noSessions")}
             </div>
           ) : (
@@ -649,13 +674,13 @@ export default function App() {
 
           {/* Terminals list when Terminal Tab is active */}
           {selectedSessionId && activeTab === "terminal" && (
-            <div style={{ marginTop: "24px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", paddingLeft: "8px" }}>
-                <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "hsl(var(--muted-foreground))", letterSpacing: "1px" }}>
+            <div className="rail-terminal-section">
+              <div className="rail-section-heading">
+                <div>
                   {t("terminalsTitle")}
                 </div>
                 <button
-                  className="shadcn-btn shadcn-btn-outline"
+                  className="rail-new-shell"
                   onClick={handleOpenShell}
                   style={{
                     padding: "4px 8px",
@@ -667,7 +692,7 @@ export default function App() {
               </div>
 
               {filteredShells.length === 0 ? (
-                <div style={{ padding: "12px 8px", fontSize: "12px", color: "hsl(var(--muted-foreground))", textAlign: "center" }}>
+                <div className="rail-empty-state is-compact">
                   {t("noTerminals")}
                 </div>
               ) : (
@@ -698,12 +723,10 @@ export default function App() {
           )}
 
           {/* Version Footer inside scrollable area */}
-          <div style={{ 
+          <div className="rail-version" style={{
             marginTop: "24px",
             paddingTop: "12px",
-            borderTop: "1px solid hsl(var(--border))",
             fontSize: "11px",
-            color: "hsl(var(--muted-foreground))",
             textAlign: "center",
             fontFamily: "monospace"
           }}>
@@ -714,24 +737,26 @@ export default function App() {
       </div>
 
       {/* Main Panel */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <div className="workspace-panel">
         {!selectedSessionId ? (
-          <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center" }}>
-            <div className="shadcn-card" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
-              <div style={{ fontSize: "48px", marginBottom: "16px" }}>📡</div>
-              <h2 style={{ color: "hsl(var(--foreground))", fontWeight: 600, fontSize: "18px", marginBottom: "8px" }}>
-                {t("emptyStateTitle")}
-              </h2>
-              <p style={{ color: "hsl(var(--muted-foreground))", fontSize: "13px", lineHeight: "1.5", marginBottom: "24px" }}>
-                {t("emptyStateDesc")}
-              </p>
-              <button
-                className="shadcn-btn shadcn-btn-primary"
-                onClick={openCreateModal}
-                style={{ padding: "10px 24px" }}
-              >
-                {t("connectNewSession")}
-              </button>
+          <div className="workspace-empty">
+            <div className="workspace-empty-copy">
+              <span className="workspace-kicker">AI OPERATIONS BRIDGE</span>
+              <h2>{lang === "zh" ? "让 AI 操作，人在终端中掌舵。" : "Let AI operate. Keep a human at the helm."}</h2>
+              <p>{lang === "zh"
+                ? "SSH-MCP 把 Agent、真实 PTY 与人工控制放在同一个可观察工作区。连接服务器后，AI 与你看到的是同一块终端。"
+                : "SSH-MCP brings agents, a real PTY, and human control into one observable workspace. You and the AI see the same terminal."}</p>
+              <div className="workspace-empty-actions">
+                <button className="workspace-primary-action" onClick={openCreateModal}><Plus size={17} />{t("connectNewSession")}</button>
+                <span><i />{lang === "zh" ? "本地优先 · APP 授权 · 随时接管" : "Local-first · App-gated · Human takeover"}</span>
+              </div>
+            </div>
+            <div className="workspace-flow-card" aria-label={lang === "zh" ? "连接流程" : "Connection flow"}>
+              <header><span>CONTROL PATH</span><em>LOCAL</em></header>
+              <div><i>01</i><span><strong>AI CLIENT</strong><small>Claude · Codex · Cursor</small></span><b>CONFIG</b></div>
+              <div><i>02</i><span><strong>DESKTOP GATE</strong><small>{lang === "zh" ? "由你决定是否授权" : "You control authorization"}</small></span><b>MCP</b></div>
+              <div><i>03</i><span><strong>SHARED PTY</strong><small>{lang === "zh" ? "AI 与人工共享终端" : "One terminal, shared control"}</small></span><b>SSH</b></div>
+              <footer><ShieldCheck size={15} />{lang === "zh" ? "关闭 APP 即关闭全部能力" : "Close the App to stop every process"}</footer>
             </div>
           </div>
         ) : (
@@ -1075,7 +1100,8 @@ export default function App() {
           </form>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -1095,32 +1121,24 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
   const authLabel = session.authType === "privateKey" ? t("authPrivateKeySaved") : t("authPasswordSaved");
 
   return (
-    <div className="shadcn-card" style={{ 
-      margin: "12px 12px 0 12px", 
+    <div className="session-context-bar" style={{
       padding: "10px 16px", 
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
       gap: "20px",
-      borderRadius: "6px",
     }}>
       {/* Session Title & Connection Info */}
       <div style={{ display: "flex", alignItems: "center", gap: "14px", flex: 1, minWidth: 0 }}>
         {/* Status Dot */}
-        <div style={{ 
-          width: "8px", 
-          height: "8px", 
-          borderRadius: "50%", 
-          background: session.connected ? "#22c55e" : "hsl(var(--destructive))", 
-          flexShrink: 0
-        }} />
+        <div className={`context-status ${session.connected ? "is-online" : ""}`}><i /></div>
         
         {/* Session Name */}
-        <span style={{ fontSize: "14px", fontWeight: 600, color: "hsl(var(--foreground))", flexShrink: 0 }}>
+        <span className="context-session-name" style={{ flexShrink: 0 }}>
           {session.label}{!session.connected && (lang === "zh" ? " (未连接)" : " (Disconnected)")}
         </span>
         
-        <div style={{ width: "1px", height: "16px", background: "hsl(var(--border))", flexShrink: 0 }} />
+        <div className="context-divider" />
 
         {/* Horizontal Info Items */}
         <div style={{ display: "flex", alignItems: "center", gap: "16px", flex: 1, minWidth: 0, overflowX: "auto" }}>
@@ -1133,7 +1151,7 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
       <div style={{ display: 'flex', gap: '8px' }}>
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('open-monitor', { detail: { sessionId: session.id } }))}
-          className="shadcn-btn shadcn-btn-outline"
+          className="context-action"
           style={{
             padding: '6px 12px',
             fontSize: '12px',
@@ -1144,11 +1162,11 @@ function SelectedSessionView({ session, lang, onEdit }: SelectedSessionViewProps
           }}
           title={t("tabMonitor")}
         >
-          📊 {t("tabMonitor")}
+          <Activity size={14} /> {t("tabMonitor")}
         </button>
         <button
           onClick={() => onEdit(session)}
-          className="shadcn-btn shadcn-btn-outline"
+          className="context-action"
           style={{
             padding: '6px 12px',
             fontSize: '12px',
@@ -1212,21 +1230,24 @@ function XtermView({ shellId, lang }: XtermViewProps) {
 
     const term = new Terminal({
       cursorBlink: true,
-      fontSize,
+      fontSize: 13,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       scrollback: 10000,
       theme: {
-        background: "#f8fafc",
-        foreground: "#0f172a",
-        cursor: "#0f172a",
-        black: "#0f172a",
-        red: "#ef4444",
-        green: "#10b981",
-        yellow: "#d97706",
-        blue: "#2563eb",
-        magenta: "#c084fc",
-        cyan: "#0891b2",
-        white: "#f8fafc",
+        background: "#091019",
+        foreground: "#d8e2ec",
+        cursor: "#5eead4",
+        cursorAccent: "#091019",
+        selectionBackground: "#1f3f48",
+        black: "#0b121b",
+        red: "#fb7185",
+        green: "#5eead4",
+        yellow: "#fbbf24",
+        blue: "#7dd3fc",
+        magenta: "#c4b5fd",
+        cyan: "#67e8f9",
+        white: "#e8eef4",
+        brightBlack: "#64748b",
       }
     });
 

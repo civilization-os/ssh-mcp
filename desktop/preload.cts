@@ -4,6 +4,7 @@ export interface DesktopState {
   desktop: true;
   mcpEnabled: boolean;
   port: number;
+  bridgePath: string;
   version: string;
   shuttingDown: boolean;
 }

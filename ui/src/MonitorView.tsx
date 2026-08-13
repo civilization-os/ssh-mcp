@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { translations } from "./i18n";
 import type { Language } from "./i18n";
@@ -23,11 +23,25 @@ interface StatPoint {
 
 const API_BASE = "";
 
+function createInitialStatsHistory(): StatPoint[] {
+  const history: StatPoint[] = [];
+  const now = new Date();
+  for (let index = 19; index >= 0; index--) {
+    const sampleTime = new Date(now.getTime() - index * 2000);
+    history.push({
+      time: `${sampleTime.getHours().toString().padStart(2, "0")}:${sampleTime.getMinutes().toString().padStart(2, "0")}:${sampleTime.getSeconds().toString().padStart(2, "0")}`,
+      cpu: 0,
+      mem: 0
+    });
+  }
+  return history;
+}
+
 export function MonitorView({ sessionId, lang }: MonitorViewProps) {
   const [sysinfo, setSysinfo] = useState("");
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [loading, setLoading] = useState(false);
-  const [statsHistory, setStatsHistory] = useState<StatPoint[]>([]);
+  const [statsHistory, setStatsHistory] = useState<StatPoint[]>(createInitialStatsHistory);
 
   const t = (key: keyof typeof translations["en"]): string => {
     return translations[lang][key] || translations["en"][key] || "";
@@ -45,17 +59,18 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
       return { label: line.slice(0, idx), value: line.slice(idx + 1).trim() };
     });
 
-  const loadMonitorData = async () => {
+  const loadMonitorData = useCallback(async () => {
     setLoading(true);
     try {
-      const sysRes = await fetch(`${API_BASE}/api/sessions/${sessionId}/sysinfo`);
-      const sysData = await sysRes.json();
+      const [sysRes, procRes] = await Promise.all([
+        fetch(`${API_BASE}/api/sessions/${sessionId}/sysinfo`),
+        fetch(`${API_BASE}/api/sessions/${sessionId}/processes?limit=15`)
+      ]);
+      const [sysData, procData] = await Promise.all([sysRes.json(), procRes.json()]);
       if (sysData.content && sysData.content[0]) {
         setSysinfo(sysData.content[0].text);
       }
 
-      const procRes = await fetch(`${API_BASE}/api/sessions/${sessionId}/processes?limit=15`);
-      const procData = await procRes.json();
       if (procData.content && procData.content[0]) {
         const lines = procData.content[0].text.trim().split("\n");
         const list: ProcessInfo[] = [];
@@ -84,9 +99,9 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [sessionId]);
 
-  const loadLiveStats = async () => {
+  const loadLiveStats = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/stats`);
       const data = await res.json();
@@ -103,32 +118,22 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
     } catch (e) {
       console.error("Failed to load live stats", e);
     }
-  };
+  }, [sessionId]);
 
   useEffect(() => {
-    loadMonitorData();
+    const initialLoad = window.setTimeout(() => {
+      void loadMonitorData();
+      void loadLiveStats();
+    }, 0);
     const timer = setInterval(loadMonitorData, 10000);
-
-    const initialHistory: StatPoint[] = [];
-    const now = new Date();
-    for (let i = 19; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 2000);
-      initialHistory.push({
-        time: `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`,
-        cpu: 0,
-        mem: 0
-      });
-    }
-    setStatsHistory(initialHistory);
-
-    loadLiveStats();
     const statsTimer = setInterval(loadLiveStats, 1000);
 
     return () => {
+      window.clearTimeout(initialLoad);
       clearInterval(timer);
       clearInterval(statsTimer);
     };
-  }, [sessionId]);
+  }, [loadLiveStats, loadMonitorData]);
 
   return (
     <div className="monitor-page">

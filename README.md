@@ -123,33 +123,41 @@ This console bundles:
 - **Incremental / peek reads**: `ssh_shell_read` returns visible changes since the last `ssh_shell_write` by default; repeated reads keep the same semantic window until the next write or `clear: true`. Use `peek: true` for rendered scrollback.
 - **Keep-alive**: Optional heartbeats (`\x00`) to prevent `TMOUT` session disconnects on strict servers.
 
-### MCP Configuration Examples
+### Desktop MCP Configuration
 
-#### Claude Desktop / Claude Code
+The Desktop app is the authorization boundary. Install and open **SSH-MCP Desktop**, click **Connect AI** in the left control rail, and copy the generated configuration. The app inserts the exact Bridge path for the selected installation directory.
 
-`.mcp.json`:
+The default per-user installation produces JSON like this for Claude Desktop, Claude Code, Cursor, Windsurf, and other clients that accept `mcpServers`:
 
 ```json
 {
   "mcpServers": {
     "ssh-mcp": {
-      "command": "npx",
-      "args": ["-y", "github:civilization-os/ssh-mcp"]
+      "command": "C:\\Users\\YOUR_NAME\\AppData\\Local\\Programs\\SSH-MCP Desktop\\ssh-mcp-bridge.cmd"
     }
   }
 }
 ```
 
-#### Cursor / Windsurf / Continue / OpenCode
+For Codex, add the following to `~/.codex/config.toml`:
 
-Replace `/path/to/` with your actual build path if installing locally.
+```toml
+[mcp_servers."ssh-mcp"]
+command = 'C:\Users\YOUR_NAME\AppData\Local\Programs\SSH-MCP Desktop\ssh-mcp-bridge.cmd'
+```
+
+If a custom installation directory was selected, use its `ssh-mcp-bridge.cmd` instead. Keep the Desktop app running and turn on **MCP access**. With the switch off, the Bridge exposes no SSH tools; closing the app terminates the managed MCP, SSH, and PTY processes.
+
+For development from a source checkout while the Desktop app is running:
 
 ```json
 {
-  "name": "ssh-mcp",
-  "type": "command",
-  "command": "node",
-  "args": ["/path/to/ssh-mcp/build/index.js"]
+  "mcpServers": {
+    "ssh-mcp": {
+      "command": "node",
+      "args": ["D:\\path\\to\\ssh-mcp\\build\\index.js"]
+    }
+  }
 }
 ```
 

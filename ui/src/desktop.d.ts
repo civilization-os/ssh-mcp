@@ -2,6 +2,7 @@ interface SshMcpDesktopState {
   desktop: true;
   version: string;
   port: number;
+  bridgePath: string;
   mcpEnabled: boolean;
   shuttingDown: boolean;
 }
