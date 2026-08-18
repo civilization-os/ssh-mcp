@@ -1,167 +1,214 @@
-# ssh-mcp
+# SSH-MCP Desktop
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-007ACC.svg)](https://www.typescriptlang.org/)
-[![Node](https://img.shields.io/badge/Node-%3E%3D18-339933.svg)](https://nodejs.org/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/civilization-os/ssh-mcp/pulls)
-[![MCP Server](https://img.shields.io/badge/MCP-Server-7C3AED.svg)](https://modelcontextprotocol.io)
+[![最新版本](https://img.shields.io/github/v/release/civilization-os/ssh-mcp?display_name=tag&sort=semver)](https://github.com/civilization-os/ssh-mcp/releases/latest)
+[![桌面版发布](https://github.com/civilization-os/ssh-mcp/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/civilization-os/ssh-mcp/actions/workflows/desktop-release.yml)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6.svg)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.19-339933.svg)](https://nodejs.org/)
+[![许可证：MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> 面向 AI Agent 的有状态服务器操作运行时：持久化 SSH、交互式 PTY、Shell 输出流、终端缓冲区读取、SFTP、Kubernetes 工具，以及内置浏览器运维控制台。
+> 让 AI 执行，让人始终掌舵。
 
-🌐 **English version:** [README.md](README.md)
+SSH-MCP Desktop 是一个面向 Windows 的人机协同运维工作台，让 AI Agent 与用户共享同一个真实 SSH 终端。Desktop App 负责运行时、连接、授权开关和完整生命周期：只有 APP 正在运行且 **MCP 访问**已开启时，MCP 客户端才能使用 SSH 能力。
 
----
+**语言：** [English](README.md) · 简体中文
 
-### 概述
+## 为什么选择 SSH-MCP Desktop？
 
-**ssh-mcp** 是一个面向人机协作的 MCP（Model Context Protocol）服务器。
+许多 SSH 自动化工具执行的是彼此隔离的命令，用户既看不到完整状态，也很难中途介入。SSH-MCP 使用长时间运行的 PTY：
 
-它并不只是一个远程命令执行器。`ssh-mcp` 会维护长生命周期 SSH 会话，暴露交互式 PTY 状态，允许 Agent 读取当前终端缓冲区并继续输入，同时支持通过 MCP Resource 实时订阅 Shell 输出，并提供完整的 SFTP 文件操作能力。
+- AI 与用户看到同一份终端输出；
+- 双方都能继续向同一个 Shell 输入；
+- `sudo`、`su`、交互式安装器、Docker、Kubernetes 和容器 Shell 等流程可以保持上下文；
+- APP 始终是可见的授权边界与关闭入口。
 
-这使它非常适合 Claude Code、Codex、Cursor 等 AI Coding Agent 对远程 Linux 服务器进行长生命周期、可观察、可控制的交互式操作，并且人类用户可以随时观察、校验和接管整个过程。
+它面向的是有人监督的 AI 运维，而不是隐藏的无人值守命令执行。
 
-项目同时内置了浏览器运维控制台，可用于终端访问、SFTP 文件管理、Kubernetes 操作以及系统监控。
+## 控制模型
 
-### Features
-
-| 分类 | 工具 | 功能说明 |
-|------|------|----------|
-| **会话管理** | `ssh_connect`, `k8s_connect`, `ssh_disconnect`, `ssh_sessions` | 持久化 SSH 或本地 Kubernetes 连接池 |
-| **文件操作** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | 完整 SFTP 功能：读写、上传、递归删除、权限管理等 |
-| **系统监控** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | 系统信息、进程列表（按 CPU/内存排序）、磁盘使用 |
-| **交互式 Shell** | `ssh_shell`, `ssh_shell_read`, `ssh_shell_write`, `ssh_shell_resize`, `ssh_shell_close`, `ssh_shell_list` | 完整 PTY 支持，具备 `expect` 匹配、ANSI 剥离、`tailLines` 快照、`peek` 读取及 `keepAlive` 心跳 |
-| **Resources** | `mcp://ssh/shell/{shellId}/output`, `mcp://ssh/sessions`, `mcp://ssh/shells` | 用于实时 Shell 输出和会话状态的 MCP Resource |
-| **Kubernetes** | `ssh_k8s_list_pods`, `ssh_k8s_pod_logs`, `ssh_k8s_pod_exec`, `ssh_k8s_pod_cp`, `ssh_k8s_arthas_attach` | 完整 Pod 管理及基于 Arthas 的 Java 诊断。支持本地或远程执行。 |
-
-### Kubernetes 多执行引擎 (v2.0)
-
-`ssh-mcp` v2.0 引入了 **Multi-Executor** 架构。这解决了在严苛 PaaS 环境中 SSH 用户缺乏 root/kubectl 权限的问题。
-
-1. **远程执行 (SSH)**：默认模式，通过 SSH 在远程宿主机执行 `kubectl`。
-2. **本地执行 (Direct)**：使用 `k8s_connect` 并提供 `kubeconfig` 内容，或直接提供 `server`、CA、客户端证书/私钥、`token` 等 API Server 凭据。MCP Server 会生成临时 kubeconfig 并在本地执行 `kubectl`，完全绕过 SSH。
-
-使用 API Server 证书直连时，`k8s_connect` 示例：
-
-```json
-{
-  "name": "prod-cluster",
-  "server": "https://10.0.0.1:6443",
-  "certificateAuthority": "/path/to/ca.crt",
-  "clientCertificate": "/path/to/client.crt",
-  "clientKey": "/path/to/client.key",
-  "namespace": "default"
-}
+```text
+AI 客户端（Codex / Claude / Cursor / Windsurf）
+                    │ stdio
+                    ▼
+               已安装的 MCP Bridge
+                    │ 运行时令牌
+                    ▼
+       SSH-MCP Desktop ── MCP 访问开关
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+      共享 SSH PTY        SFTP / 系统监控
+          ▲
+          └──── 用户在 APP 中输入
 ```
 
-使用 Bearer Token 直连时，`k8s_connect` 示例：
+- **MCP 访问关闭**时，Bridge 不发布任何 SSH 工具或资源。
+- 打开开关后，连接的 MCP 客户端才能发现这些能力。
+- 关闭 APP 会禁用 MCP、关闭 SSH 与 PTY 会话、停止托管的核心运行时和已登记的 Bridge 进程，并删除运行时授权文件。
+- 本地控制面只监听回环地址，Desktop 请求使用每次启动随机生成的授权令牌。
 
-```json
-{
-  "name": "prod-cluster",
-  "server": "https://10.0.0.1:6443",
-  "token": "YOUR_BEARER_TOKEN",
-  "insecureSkipTlsVerify": true
-}
-```
+## 核心能力
 
-### 快速开始
+### 共享且理解终端语义的 PTY
 
-完整安装说明请查看 [install.md](install.md)，其中包含 Codex 全局配置、项目级 `.mcp.json`、`npx` 和本地开发安装方式。
+APP 使用 xterm.js 渲染原始 SSH 字节流；MCP 读取则将同一份字节流交给无头终端模型处理。因此，回车、退格、制表符、ANSI 擦除与游标移动、备用屏幕和宽字符都会按真实终端语义生效。
 
-#### 选项 1：使用 `npx`（最简单，无需安装）
+`ssh_shell_read` 支持：
 
-无需克隆代码，直接在 MCP 客户端配置中使用：
+- 只对程序输出执行 `expect` 匹配，避免命令回显提前命中；
+- `content`、`inputEcho` 和 `programOutput` 三种输出视图；
+- 增量读取、`peek`、`tailLines` 和输出长度限制；
+- 游标与终端尺寸信息；
+- 可选的保活心跳。
 
-```json
-"mcpServers": {
-  "ssh-mcp": {
-    "command": "npx",
-    "args": ["-y", "github:civilization-os/ssh-mcp"]
-  }
-}
-```
+即使 Bash 提示符回显了完整命令，完成标记也不会在程序真正输出之前被误判。
 
-#### 选项 2：本地安装
+### 人工随时接管
 
-```bash
-git clone https://github.com/civilization-os/ssh-mcp.git
-cd ssh-mcp
-npm install
-npm run build
-```
+系统不存在另一个隐藏的命令执行通道。Agent 输入的命令会出现在 Desktop 终端中，用户可以检查输出、补充输入、按 `Ctrl+C` 中断，或者随时直接接管 Shell。
 
-然后将 MCP 客户端指向 `/absolute/path/to/ssh-mcp/build/index.js`。
+### Desktop 运维工作台
 
-### 运维控制台 (Dashboard UI)
+- SSH 连接档案与可恢复会话
+- 实时 PTY 交互终端
+- SFTP 文件浏览与编辑
+- 系统信息、进程与磁盘使用情况
+- 自动生成 MCP JSON 和 Codex TOML 配置
+- 英文与简体中文界面
 
-当 MCP Server 被 Claude、Cursor 等客户端启动后，内置浏览器运维控制台默认运行在：
+### APP 级网络与更新
 
-👉 **http://localhost:12222**
+- 系统代理、直连或手动 HTTP(S)/SOCKS 代理
+- 可选的代理用户名与密码认证
+- 代理绕过规则；本地 MCP 流量和目标 SSH 连接不走 APP 代理
+- 在 APP 内检查 GitHub Release、显示下载进度并安装更新
+- 可选的自动检查更新
 
-如果已经有另一个 `ssh-mcp` 进程在提供浏览器运维控制台，新的 Agent 进程会直接复用这个已有 UI 服务，而不会再额外启动一个新的界面。
+## 安装与连接
 
-如果 `12222` 是被其他程序占用，且当前没有可复用的 `ssh-mcp` UI，`ssh-mcp` 会自动尝试下一个可用端口，请以启动日志输出为准。
+### 1. 安装 Desktop App
 
-控制台包含：
+从 [GitHub Releases](https://github.com/civilization-os/ssh-mcp/releases/latest) 下载最新的 Windows x64 NSIS 安装程序。安装向导支持自定义安装目录，并会创建开始菜单和桌面快捷方式。
 
-- **💻 WebShell**：支持实时色彩渲染的交互式 PTY 终端。
-- **📂 SFTP 文件管理器**：可视化浏览远程目录树。
-- **☸️ Kubernetes 管理**：Pod 管理、日志查看、Arthas 诊断。
-- **📊 系统监控**：实时服务器负载与进程监控。
+### 2. 添加 SSH 连接
 
-### 针对 Agent 的智能特性
+打开 SSH-MCP Desktop，选择 **新建 SSH 连接**，填写主机、端口、用户名，并提供密码或私钥。
 
-- **有状态会话**：跨多次工具调用复用同一 SSH 连接。
-- **交互式 PTY**：支持持续输入，而不是一次性执行孤立命令。
-- **Shell 输出流**：支持订阅 `mcp://ssh/shell/{shellId}/output` 获取实时终端输出。
-- **`expect` 匹配**：等待指定 Prompt 或正则出现后再返回。
-- **ANSI 剥离**：减少终端颜色控制符，提高 AI 可读性。
-- **Read Cursor / Peek 读取**：`ssh_shell_read` 默认返回自上次 `ssh_shell_write` 以来累计的增量输出；重复读取会保持同一增量窗口，直到下一次写入或显式 `clear: true`。如需完整缓冲区快照，请使用 `peek: true`。
-- **KeepAlive 心跳**：防止严格服务器因 `TMOUT` 自动断开。
+### 3. 连接 AI 客户端
 
-### MCP 配置示例
+点击左侧控制栏中的 **连接 AI** 并复制自动生成的配置。APP 会填入当前安装位置的准确路径，自定义安装目录也无需手动推测。
 
-#### Claude Desktop / Claude Code
-
-`.mcp.json`：
+Claude Desktop、Claude Code、Cursor、Windsurf 及其他使用 `mcpServers` 的客户端采用 JSON：
 
 ```json
 {
   "mcpServers": {
     "ssh-mcp": {
-      "command": "npx",
-      "args": ["-y", "github:civilization-os/ssh-mcp"]
+      "command": "C:\\Users\\YOUR_NAME\\AppData\\Local\\Programs\\SSH-MCP Desktop\\ssh-mcp-bridge.cmd"
     }
   }
 }
 ```
 
-#### Cursor / Windsurf / Continue / OpenCode
+Codex 使用 `~/.codex/config.toml`：
 
-```json
-{
-  "name": "ssh-mcp",
-  "type": "command",
-  "command": "node",
-  "args": ["/path/to/ssh-mcp/build/index.js"]
-}
+```toml
+[mcp_servers."ssh-mcp"]
+command = "C:\\Users\\YOUR_NAME\\AppData\\Local\\Programs\\SSH-MCP Desktop\\ssh-mcp-bridge.cmd"
 ```
 
-### 架构设计
+请优先复制 APP 生成的配置，不要手工修改示例路径。
 
+### 4. 授权 MCP
+
+保持 SSH-MCP Desktop 运行并打开 **MCP 访问**。如果添加配置后 AI 客户端没有立即发现 Bridge，请重启该客户端。
+
+> Bridge 不是独立服务器，也不会自行启动 Desktop 运行时。仅使用 `npx` 的配置已经不是当前支持的架构。
+
+## MCP 能力
+
+MCP 访问开启时，当前 Bridge 共发布 21 个工具。
+
+| 分组 | 工具 | 用途 |
+|---|---|---|
+| 会话 | `ssh_connect`、`ssh_disconnect`、`ssh_sessions`、`ssh_web_start` | 创建、恢复、查看或断开连接，也可打开本地工作台 |
+| 共享 Shell | `ssh_shell`、`ssh_shell_write`、`ssh_shell_read`、`ssh_shell_resize`、`ssh_shell_close`、`ssh_shell_list` | 操作长时间运行的交互式 PTY |
+| 文件 | `ssh_file_read`、`ssh_file_write`、`ssh_file_list`、`ssh_file_delete`、`ssh_file_rename`、`ssh_file_mkdir`、`ssh_file_chmod`、`ssh_file_stat` | 通过 SFTP 管理远程文件 |
+| 监控 | `ssh_sysinfo`、`ssh_processes`、`ssh_disk_usage` | 查看远程系统、进程和存储状态 |
+
+MCP 资源提供当前会话、Shell 状态和渲染后的终端输出：
+
+- `mcp://ssh/sessions`
+- `mcp://ssh/shells`
+- `mcp://ssh/shell/{shellId}/output`
+
+## 安全与本地数据
+
+- Electron 开启上下文隔离与渲染器沙箱，并关闭 Node 集成。
+- Desktop 运行时仅监听 `127.0.0.1`，每次启动都会生成随机 Bearer Token。
+- APP 开关控制 MCP 工具与资源是否可发现。
+- SSH 连接档案和凭据保存在 Desktop AppData 中，以便重启后恢复连接；凭据字段写入磁盘前使用 AES-256-GCM 加密。
+- 手动代理的密码由 Electron `safeStorage` 保护，且不会返回给渲染器。
+- 卸载时可以选择同时删除连接档案、加密凭据、设置和日志。
+
+本地加密不能替代操作系统账户安全。请保护 Windows 账户及其应用数据目录的访问权限。
+
+## 本地开发
+
+环境要求：
+
+- 打包版 Desktop App：Windows 10/11 x64
+- Node.js 20.19 或更高版本
+- npm
+
+```powershell
+git clone https://github.com/civilization-os/ssh-mcp.git
+cd ssh-mcp
+npm install
+npm --prefix ui install
+npm run typecheck
+npm test
+npm run desktop:dev
 ```
+
+构建生产文件：
+
+```powershell
+npm run build
+```
+
+在 `release/` 中生成本地 NSIS 安装包：
+
+```powershell
+npm run desktop:dist
+```
+
+## 项目结构
+
+```text
+desktop/
+├── main.ts              # Electron 生命周期、MCP 开关、代理与关闭流程
+├── updateManager.ts     # GitHub Release 更新检查与安装
+├── bridge/              # 安装到本地的 MCP Bridge 启动器
+└── installer/           # NSIS 生命周期钩子
 src/
-├── index.ts          # 入口：Server 初始化、工具注册、请求路由
-├── server.ts         # HTTP 服务：REST API、WebSockets、静态 UI 托管
-├── session.ts        # 会话管理器（持久化连接池）
-├── types.ts          # TypeScript 接口与参数校验
+├── index.ts             # MCP stdio Bridge
+├── daemon.ts            # Desktop 托管核心入口
+├── server.ts            # 本地 REST/WebSocket 控制面
+├── desktopRuntime.ts    # 运行时发现与授权
+├── session.ts           # SSH 档案、连接池与恢复逻辑
+├── terminalView.ts      # 终端语义输出模型
 └── handlers/
-    ├── sftp.ts       # 全功能 SFTP 操作
-    ├── shell.ts      # 交互式 PTY Shell 逻辑
-    ├── system.ts     # 系统监控工具
-    └── k8s.ts        # Kubernetes Pod 管理
+    ├── shell.ts         # 交互式 PTY 操作
+    ├── sftp.ts          # 远程文件操作
+    ├── system.ts        # 系统监控
+    └── mcp.ts           # MCP 工具与资源路由
+ui/src/                  # React Desktop 渲染器
 ```
 
-### License
+## 发布
 
-MIT
+`v2.5.2` 这样的标签必须与 `package.json` 中的版本一致。Desktop Release 工作流会校验版本、执行类型检查和测试、构建 Windows NSIS 安装包，并发布 APP 在线更新所需的安装包、block map 和 `latest.yml`。
+
+## 许可证
+
+[MIT](LICENSE)

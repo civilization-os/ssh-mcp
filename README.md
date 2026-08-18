@@ -1,133 +1,103 @@
-# ssh-mcp
+# SSH-MCP Desktop
 
+[![Latest release](https://img.shields.io/github/v/release/civilization-os/ssh-mcp?display_name=tag&sort=semver)](https://github.com/civilization-os/ssh-mcp/releases/latest)
+[![Desktop release](https://github.com/civilization-os/ssh-mcp/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/civilization-os/ssh-mcp/actions/workflows/desktop-release.yml)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6.svg)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.19-339933.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-007ACC.svg)](https://www.typescriptlang.org/)
-[![Node](https://img.shields.io/badge/Node-%3E%3D20.19-339933.svg)](https://nodejs.org/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/civilization-os/ssh-mcp/pulls)
-[![MCP Server](https://img.shields.io/badge/MCP-Server-7C3AED.svg)](https://modelcontextprotocol.io)
 
-> A stateful server operations runtime for AI agents: long-lived SSH, interactive PTY, shell output streaming, terminal buffer reading, SFTP, Kubernetes tools, and a built-in browser console.
+> Let AI operate. Keep a human at the helm.
 
-🌐 **Other languages:** [中文](README.zh-CN.md)
+SSH-MCP Desktop is a Windows operations workspace that lets AI agents and humans share the same real SSH terminal. The Desktop app owns the runtime, connections, authorization switch, and lifecycle: an MCP client can use SSH capabilities only while the app is running and **MCP access** is enabled.
 
----
+**Languages:** English · [简体中文](README.zh-CN.md)
 
-### Overview
+## Why SSH-MCP Desktop?
 
-**ssh-mcp** is an MCP (Model Context Protocol) server for human-AI collaborative server operations.
+Most SSH automation tools run isolated commands whose state and progress are invisible to the user. SSH-MCP uses a long-lived PTY instead:
 
-It is not just a remote command executor. It keeps long-lived SSH sessions, exposes interactive Shell (PTY) state, allows agents to read the current terminal buffer and continue input, supports real-time shell output updates through MCP resources, and provides full SFTP file operations.
+- the AI and the user see the same terminal output;
+- either side can continue typing into the same shell;
+- interactive flows such as `sudo`, `su`, installers, Docker, Kubernetes, and container shells keep working;
+- the app remains the visible authorization and shutdown boundary.
 
-This makes it suitable for Claude Code, Codex, Cursor, and other AI coding agents that need long-lived, observable, and controllable interactions with remote Linux servers while keeping the human user able to observe, verify, and take over at any time.
+This is designed for supervised AI operations, not unattended command execution.
 
-It also includes a built-in browser operations console for visual terminal access, SFTP file management, Kubernetes operations, and system monitoring.
+## Control model
 
-For security, `ssh-mcp` keeps SSH passwords, private keys, and local kubeconfig content in process memory only. They are not persisted to disk and are not restored after process restart.
-
-### Features
-
-| Category | Tools | Description |
-|----------|-------|-------------|
-| **Session** | `ssh_connect`, `k8s_connect`, `ssh_disconnect`, `ssh_sessions` | Persistent SSH or local Kubernetes connection pool |
-| **SFTP** | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Full file operations with recursive directory delete/chmod, mkdir -p support |
-| **Monitoring** | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | OS info, process list sorted by CPU/memory, disk usage |
-| **Interactive Shell** | `ssh_shell`, `ssh_shell_read`, `ssh_shell_write`, `ssh_shell_resize`, `ssh_shell_close`, `ssh_shell_list` | Shared PTY with terminal-semantic reads, `expect`, `tailLines`, `peek`, cursor position, and `keepAlive` heartbeats |
-| **Resources** | `mcp://ssh/shell/{shellId}/output`, `mcp://ssh/sessions`, `mcp://ssh/shells` | MCP resources for active session state and real-time shell output updates |
-| **Kubernetes** | `ssh_k8s_list_pods`, `ssh_k8s_pod_logs`, `ssh_k8s_pod_exec`, `ssh_k8s_pod_cp`, `ssh_k8s_arthas_attach` | Full pod management and Java diagnostics via Arthas. Supports local or remote execution. |
-
-### Kubernetes Multi-Executor (v2.0)
-
-`ssh-mcp` v2.0 introduces a **Multi-Executor** architecture for Kubernetes tools. This solves the "Permission Denied" issue in strict PaaS environments where SSH users lack root/kubectl access.
-
-1. **Remote Executor (SSH)**: The default mode. Connects via SSH and runs `kubectl` on the remote host.
-2. **Local Executor (Direct)**: Use `k8s_connect` with either `kubeconfig` content or direct API server credentials (`server`, CA, client cert/key, or token). The MCP server will generate a temporary kubeconfig and run `kubectl` locally, bypassing SSH entirely. This is ideal for managing clusters where you only have API access or Root access via a proprietary PaaS web shell.
-
-Example `k8s_connect` payload using API server certificates:
-
-```json
-{
-  "name": "prod-cluster",
-  "server": "https://10.0.0.1:6443",
-  "certificateAuthority": "/path/to/ca.crt",
-  "clientCertificate": "/path/to/client.crt",
-  "clientKey": "/path/to/client.key",
-  "namespace": "default"
-}
+```text
+AI client (Codex / Claude / Cursor / Windsurf)
+                    │ stdio
+                    ▼
+           Installed MCP Bridge
+                    │ runtime token
+                    ▼
+       SSH-MCP Desktop ── MCP access switch
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+   Shared SSH PTY       SFTP / Monitoring
+          ▲
+          └──── Human input in the app
 ```
 
-Example `k8s_connect` payload using a bearer token:
+- With **MCP access off**, the Bridge publishes no SSH tools or resources.
+- Turning it on makes the tools available to connected MCP clients.
+- Closing the app disables MCP, closes SSH and PTY sessions, stops the managed core runtime and registered Bridge processes, and removes the runtime authorization file.
+- The local control plane binds to loopback and Desktop requests use a per-launch authorization token.
 
-```json
-{
-  "name": "prod-cluster",
-  "server": "https://10.0.0.1:6443",
-  "token": "YOUR_BEARER_TOKEN",
-  "insecureSkipTlsVerify": true
-}
-```
+## Highlights
 
-### Quick Start
+### Shared, terminal-aware PTY
 
-For a complete install guide for Codex, Claude, Cursor, and local development, see [install.md](install.md).
+The app renders the original SSH byte stream with xterm.js. MCP reads process that same stream through a headless terminal model, so carriage returns, backspace, tabs, ANSI erase and cursor movement, alternate screens, and wide characters have their real terminal meaning.
 
-#### Option 1: Use `npx` (Easiest, No Install)
+`ssh_shell_read` supports:
 
-No need to clone the repo. Just use `npx` in your MCP client config. This always uses the latest version.
+- `expect` matching against program output instead of the echoed command;
+- `content`, `inputEcho`, and `programOutput` views;
+- incremental reads, `peek`, `tailLines`, and output limits;
+- cursor and terminal-size information;
+- optional keep-alive heartbeats.
 
-```json
-"mcpServers": {
-  "ssh-mcp": {
-    "command": "npx",
-    "args": ["-y", "github:civilization-os/ssh-mcp"]
-  }
-}
-```
+This prevents completion markers in a Bash prompt or command echo from matching before the program actually prints them.
 
-#### Option 2: Local Install
+### Human takeover
 
-```bash
-git clone https://github.com/civilization-os/ssh-mcp.git
-cd ssh-mcp
-npm install
-npm run build
-```
+There is no separate hidden execution channel. Commands entered by an agent appear in the Desktop terminal, and the user can inspect the output, type additional input, interrupt with `Ctrl+C`, or take over the shell at any time.
 
-Then point your MCP client to `/absolute/path/to/ssh-mcp/build/index.js`.
+### Desktop operations workspace
 
-### Dashboard UI
+- SSH profiles and reconnectable sessions
+- Interactive terminal with live PTY streaming
+- SFTP file browser and editor
+- System information, processes, and disk usage
+- MCP client configuration generator for JSON and Codex TOML
+- English and Simplified Chinese interface
 
-Once the MCP server is started by your client (Claude, Cursor, etc.), the built-in browser console is available by default at:
+### App-level networking and updates
 
-👉 **[http://localhost:12222](http://localhost:12222)**
+- System proxy, direct connection, or manual HTTP(S)/SOCKS proxy
+- Optional proxy username and password authentication
+- Proxy bypass rules; local MCP traffic and SSH target connections bypass the app proxy
+- In-app GitHub Release checks, download progress, and update installation
+- Optional automatic update checks
 
-If another `ssh-mcp` process is already serving the browser console, new agent processes will reuse that existing UI service instead of starting another one.
+## Install and connect
 
-If port `12222` is occupied by a different process and no existing `ssh-mcp` UI is found, `ssh-mcp` automatically tries the next available port. Check the startup logs for the actual UI address.
+### 1. Install the Desktop app
 
-This console bundles:
+Download the latest Windows x64 NSIS installer from [GitHub Releases](https://github.com/civilization-os/ssh-mcp/releases/latest). The assisted installer supports a custom installation directory and creates Start Menu and desktop shortcuts.
 
-- **💻 Terminal (WebShell)**: Interactive PTY console with live color rendering.
-- **📂 Files (SFTP Explorer)**: Visual file navigator for remote directory trees.
-- **☸️ Kubernetes**: Pod management, real-time logs, and Arthas diagnostic panel.
-- **📊 Monitoring**: Real-time server load statistics and process monitoring.
+### 2. Add an SSH connection
 
-### Smart Features for Agents
+Open SSH-MCP Desktop, select **New SSH Connection**, and enter the host, port, username, and either a password or private key.
 
-- **Stateful sessions**: Reuse the same SSH connection across multiple tool calls.
-- **Interactive PTY**: Continue input in long-running shell programs instead of executing isolated commands.
-- **Shell output streaming**: Subscribe to `mcp://ssh/shell/{shellId}/output` for real-time shell updates.
-- **`expect` matching**: `ssh_shell_read` waits for a regex in program output only, so a completion marker inside the terminal's echoed command cannot match early.
-- **Terminal-semantic reads**: `ssh_shell_read` applies carriage returns, backspace, tabs, ANSI erase/cursor movement, alternate screens, and wide-character layout before returning text to the agent.
-- **Echo-aware output**: The full terminal remains visible in `content`, while `inputEcho` identifies echoed MCP input and `programOutput` removes the complete prompt-plus-command echo, including when Bash redraws or changes its prompt.
-- **Shared terminal geometry**: App resize events update both the remote PTY and the headless terminal view, so the user and agent read the same row/column layout.
-- **Incremental / peek reads**: `ssh_shell_read` returns visible changes since the last `ssh_shell_write` by default; repeated reads keep the same semantic window until the next write or `clear: true`. Use `peek: true` for rendered scrollback.
-- **Keep-alive**: Optional heartbeats (`\x00`) to prevent `TMOUT` session disconnects on strict servers.
+### 3. Connect your AI client
 
-### Desktop MCP Configuration
+Select **Connect AI** in the left control rail and copy the generated configuration. The app supplies the exact path for the current installation, including custom install locations.
 
-The Desktop app is the authorization boundary. Install and open **SSH-MCP Desktop**, click **Connect AI** in the left control rail, and copy the generated configuration. The app inserts the exact Bridge path for the selected installation directory.
-
-The default per-user installation produces JSON like this for Claude Desktop, Claude Code, Cursor, Windsurf, and other clients that accept `mcpServers`:
+Claude Desktop, Claude Code, Cursor, Windsurf, and other JSON-based clients use:
 
 ```json
 {
@@ -139,43 +109,106 @@ The default per-user installation produces JSON like this for Claude Desktop, Cl
 }
 ```
 
-For Codex, add the following to `~/.codex/config.toml`:
+Codex uses `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers."ssh-mcp"]
-command = 'C:\Users\YOUR_NAME\AppData\Local\Programs\SSH-MCP Desktop\ssh-mcp-bridge.cmd'
+command = "C:\\Users\\YOUR_NAME\\AppData\\Local\\Programs\\SSH-MCP Desktop\\ssh-mcp-bridge.cmd"
 ```
 
-If a custom installation directory was selected, use its `ssh-mcp-bridge.cmd` instead. Keep the Desktop app running and turn on **MCP access**. With the switch off, the Bridge exposes no SSH tools; closing the app terminates the managed MCP, SSH, and PTY processes.
+Use the configuration copied from the app instead of manually editing the example path.
 
-For development from a source checkout while the Desktop app is running:
+### 4. Authorize MCP
 
-```json
-{
-  "mcpServers": {
-    "ssh-mcp": {
-      "command": "node",
-      "args": ["D:\\path\\to\\ssh-mcp\\build\\index.js"]
-    }
-  }
-}
+Keep SSH-MCP Desktop open and turn on **MCP access**. Restart the AI client after adding its MCP configuration if it does not detect the Bridge immediately.
+
+> The Bridge is not a standalone server and does not start the Desktop runtime. An `npx`-only configuration is no longer the supported architecture.
+
+## MCP capabilities
+
+The current Bridge exposes 21 tools while MCP access is enabled.
+
+| Group | Tools | Purpose |
+|---|---|---|
+| Sessions | `ssh_connect`, `ssh_disconnect`, `ssh_sessions`, `ssh_web_start` | Create, reconnect, inspect, disconnect, or open the local workspace |
+| Shared shell | `ssh_shell`, `ssh_shell_write`, `ssh_shell_read`, `ssh_shell_resize`, `ssh_shell_close`, `ssh_shell_list` | Operate long-lived interactive PTY sessions |
+| Files | `ssh_file_read`, `ssh_file_write`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Manage remote files through SFTP |
+| Monitoring | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | Inspect the remote operating system, processes, and storage |
+
+MCP resources provide active session state, active shell state, and rendered shell output:
+
+- `mcp://ssh/sessions`
+- `mcp://ssh/shells`
+- `mcp://ssh/shell/{shellId}/output`
+
+## Security and local data
+
+- Electron runs with context isolation, renderer sandboxing, and Node integration disabled.
+- The Desktop runtime listens on `127.0.0.1` and uses a random per-launch bearer token.
+- MCP tool and resource discovery is controlled by the app switch.
+- SSH profiles and credentials are stored under the Desktop application-data directory so sessions can be reconnected after a restart. Credential fields are encrypted with AES-256-GCM before being written to disk.
+- The manual proxy password is protected with Electron `safeStorage` and is never returned to the renderer.
+- The uninstaller can optionally remove saved profiles, encrypted credentials, settings, and logs.
+
+Local encryption does not replace operating-system account security. Protect access to the Windows account and its application-data directory.
+
+## Development
+
+Requirements:
+
+- Windows 10/11 x64 for the packaged Desktop app
+- Node.js 20.19 or newer
+- npm
+
+```powershell
+git clone https://github.com/civilization-os/ssh-mcp.git
+cd ssh-mcp
+npm install
+npm --prefix ui install
+npm run typecheck
+npm test
+npm run desktop:dev
 ```
 
-### Architecture
+Build the production application:
 
+```powershell
+npm run build
 ```
+
+Create a local NSIS installer in `release/`:
+
+```powershell
+npm run desktop:dist
+```
+
+## Project layout
+
+```text
+desktop/
+├── main.ts              # Electron lifecycle, MCP gate, proxy, and shutdown
+├── updateManager.ts     # GitHub Release update checks and installation
+├── bridge/              # Installed MCP Bridge launcher
+└── installer/           # NSIS lifecycle hooks
 src/
-├── index.ts          # Entry: server init, tool registration, request routing
-├── server.ts         # HTTP Server: REST API, WebSockets, and Static UI hosting
-├── session.ts        # Session manager (runtime connection pool)
-├── types.ts          # TypeScript interfaces & validators
+├── index.ts             # MCP stdio Bridge
+├── daemon.ts            # Desktop-managed core entry point
+├── server.ts            # Local REST/WebSocket control plane
+├── desktopRuntime.ts    # Runtime discovery and authorization
+├── session.ts           # SSH profiles, connection pool, and reconnect logic
+├── terminalView.ts      # Terminal-semantic output model
 └── handlers/
-    ├── sftp.ts       # Full SFTP operations
-    ├── shell.ts      # Interactive PTY Shell logic
-    ├── system.ts     # System monitoring tools
-    └── k8s.ts        # Kubernetes pod management
+    ├── shell.ts         # Interactive PTY operations
+    ├── sftp.ts          # Remote file operations
+    ├── system.ts        # System monitoring
+    └── mcp.ts           # MCP tool/resource routing
+ui/src/                  # React Desktop renderer
 ```
 
-### License
+## Releases
 
-MIT
+A tag such as `v2.5.2` must match the version in `package.json`. The Desktop Release workflow validates the version, runs type checks and tests, builds the Windows NSIS installer, and publishes the installer, block map, and `latest.yml` required by the in-app updater.
+
+## License
+
+[MIT](LICENSE)
