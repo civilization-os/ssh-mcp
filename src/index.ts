@@ -23,7 +23,7 @@ import {
 } from "./desktopRuntime.js";
 
 const server = new Server(
-  { name: "ssh-mcp-desktop", version: "2.5.3" },
+  { name: "ssh-mcp-desktop", version: "2.5.4" },
   {
     capabilities: {
       tools: { listChanged: true },
@@ -214,6 +214,23 @@ const TOOL_CATALOG = [
           timeout: { type: "number", description: "Upload timeout in milliseconds (default: 300000)", default: 300000 },
         },
         required: ["localPath", "path"],
+      },
+    },
+    {
+      name: "ssh_file_download",
+      description: "Stream a remote file via SFTP to an absolute local path on the computer running SSH-MCP Desktop. The transfer uses a temporary local file and refuses to overwrite an existing file unless overwrite=true.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session ID from ssh_connect" },
+          ...authFields,
+          path: { type: "string", description: "Absolute path to the source file on the remote server" },
+          localPath: { type: "string", description: "Absolute destination path on the SSH-MCP Desktop computer" },
+          mkdir: { type: "boolean", description: "Create local parent directories if they do not exist", default: false },
+          overwrite: { type: "boolean", description: "Replace an existing local file (default: false)", default: false },
+          timeout: { type: "number", description: "Download timeout in milliseconds (default: 300000)", default: 300000 },
+        },
+        required: ["path", "localPath"],
       },
     },
     {

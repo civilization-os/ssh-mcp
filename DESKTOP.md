@@ -50,4 +50,4 @@ Artifacts are written to `release/`. The assisted installer supports choosing an
 
 Open **Application settings** in the sidebar to choose the system proxy, a direct connection, or a manual HTTP(S)/SOCKS proxy. Manual proxies support username/password authentication. Passwords are encrypted with the operating system's secure storage and are never returned to the renderer. The proxy applies to Desktop web traffic and GitHub update checks/downloads; local MCP traffic and SSH target connections bypass it.
 
-Online updates use the public `civilization-os/ssh-mcp` GitHub Releases feed. A tag such as `v2.5.3` triggers the Windows release workflow when the tag matches `package.json`. The workflow publishes the NSIS installer and `latest.yml` metadata required by the in-app updater.
+Online updates use the public `civilization-os/ssh-mcp` GitHub Releases feed. A tag such as `v2.5.4` triggers the Windows release workflow when the tag matches `package.json`. The workflow publishes the NSIS installer and `latest.yml` metadata required by the in-app updater.

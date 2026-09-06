@@ -126,13 +126,13 @@ Keep SSH-MCP Desktop open and turn on **MCP access**. Restart the AI client afte
 
 ## MCP capabilities
 
-The current Bridge exposes 22 tools while MCP access is enabled.
+The current Bridge exposes 23 tools while MCP access is enabled.
 
 | Group | Tools | Purpose |
 |---|---|---|
 | Sessions | `ssh_connect`, `ssh_disconnect`, `ssh_sessions`, `ssh_web_start` | Create, reconnect, inspect, disconnect, or open the local workspace |
 | Shared shell | `ssh_shell`, `ssh_shell_write`, `ssh_shell_read`, `ssh_shell_resize`, `ssh_shell_close`, `ssh_shell_list` | Operate long-lived interactive PTY sessions |
-| Files | `ssh_file_read`, `ssh_file_write`, `ssh_file_upload`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Manage remote files and stream local binary files through SFTP |
+| Files | `ssh_file_read`, `ssh_file_write`, `ssh_file_upload`, `ssh_file_download`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Manage remote files and stream binary files in either direction through SFTP |
 | Monitoring | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | Inspect the remote operating system, processes, and storage |
 
 MCP resources provide active session state, active shell state, and rendered shell output:
@@ -142,6 +142,8 @@ MCP resources provide active session state, active shell state, and rendered she
 - `mcp://ssh/shell/{shellId}/output`
 
 `ssh_file_upload` accepts an absolute `localPath` on the Desktop computer and a remote `path`. It streams the file to a temporary remote path and renames it only after the transfer succeeds, so binary and large files do not pass through JSON or a full-memory buffer.
+
+`ssh_file_download` streams a remote `path` to an absolute Desktop `localPath`. It verifies the transferred byte count and installs the completed temporary file locally. Existing local files are protected unless `overwrite: true` is explicitly provided; `mkdir: true` creates missing local parent directories.
 
 ## Security and local data
 
@@ -209,7 +211,7 @@ ui/src/                  # React Desktop renderer
 
 ## Releases
 
-A tag such as `v2.5.3` must match the version in `package.json`. The Desktop Release workflow validates the version, runs type checks and tests, builds the Windows NSIS installer, and publishes the installer, block map, and `latest.yml` required by the in-app updater.
+A tag such as `v2.5.4` must match the version in `package.json`. The Desktop Release workflow validates the version, runs type checks and tests, builds the Windows NSIS installer, and publishes the installer, block map, and `latest.yml` required by the in-app updater.
 
 ## License
 

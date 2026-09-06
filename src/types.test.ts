@@ -5,6 +5,7 @@ import {
   validateSshFileReadArgs,
   validateSshFileWriteArgs,
   validateSshFileUploadArgs,
+  validateSshFileDownloadArgs,
   validateSshFileListArgs,
   validateSshFileDeleteArgs,
   validateSshFileRenameArgs,
@@ -103,6 +104,22 @@ describe("validateSshFileUploadArgs", () => {
     expect(validateSshFileUploadArgs({ localPath: "C:\\build\\app.zip" })).toBe(false);
     expect(validateSshFileUploadArgs({ localPath: " ", path: "/opt/app/app.zip" })).toBe(false);
     expect(validateSshFileUploadArgs({ localPath: "C:\\build\\app.zip", path: "" })).toBe(false);
+  });
+});
+
+describe("validateSshFileDownloadArgs", () => {
+  it("accepts a remote source and local destination", () => {
+    expect(validateSshFileDownloadArgs({
+      path: "/var/backups/app.tar.gz",
+      localPath: "C:\\backups\\app.tar.gz",
+    })).toBe(true);
+  });
+
+  it("rejects a missing or blank remote/local path", () => {
+    expect(validateSshFileDownloadArgs({ path: "/var/backups/app.tar.gz" })).toBe(false);
+    expect(validateSshFileDownloadArgs({ localPath: "C:\\backups\\app.tar.gz" })).toBe(false);
+    expect(validateSshFileDownloadArgs({ path: " ", localPath: "C:\\backups\\app.tar.gz" })).toBe(false);
+    expect(validateSshFileDownloadArgs({ path: "/var/backups/app.tar.gz", localPath: "" })).toBe(false);
   });
 });
 

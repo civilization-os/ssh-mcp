@@ -40,7 +40,29 @@ jobs:
           npm run typecheck
           npm test
 
-      - name: Build and publish NSIS release
-        run: npm run desktop:publish
+      - name: Build NSIS release
+        run: npm run desktop:dist
+
+      - name: Publish GitHub release assets
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "${{ github.ref_name }}"
+          $assets = @(
+            "release/SSH-MCP Desktop-Setup-$version-x64.exe",
+            "release/SSH-MCP Desktop-Setup-$version-x64.exe.blockmap",
+            "release/latest.yml"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset)) {
+              throw "Release asset was not generated: $asset"
+            }
+          }
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $assets --clobber
+          } else {
+            gh release create $tag $assets --title $version --generate-notes --verify-tag
+          }

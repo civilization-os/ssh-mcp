@@ -1,6 +1,6 @@
 import { Client } from "ssh2";
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { link, mkdir, rename, rm, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -9,6 +9,7 @@ import {
   SshFileReadArgs,
   SshFileWriteArgs,
   SshFileUploadArgs,
+  SshFileDownloadArgs,
   SshFileListArgs,
   SshFileDeleteArgs,
   SshFileRenameArgs,
@@ -142,6 +143,116 @@ export async function handleUploadFile(args: SshFileUploadArgs) {
       text: `Uploaded ${localStat.size} bytes from ${args.localPath} to ${args.path}`,
     }],
   };
+}
+
+// --- Download remote file ---
+
+async function localStat(filePath: string) {
+  try {
+    return await stat(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function installDownloadedFile(temporaryPath: string, destinationPath: string, overwrite: boolean) {
+  try {
+    await link(temporaryPath, destinationPath);
+    await rm(temporaryPath);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (!overwrite) {
+      throw new Error(`Local destination already exists: ${destinationPath}. Pass overwrite=true to replace it.`);
+    }
+  }
+
+  const destinationStat = await localStat(destinationPath);
+  if (!destinationStat) {
+    return installDownloadedFile(temporaryPath, destinationPath, overwrite);
+  }
+  if (!destinationStat.isFile()) {
+    throw new Error(`Local destination is not a file: ${destinationPath}`);
+  }
+
+  const backupPath = `${destinationPath}.ssh-mcp-backup-${randomBytes(8).toString("hex")}.tmp`;
+  await rename(destinationPath, backupPath);
+  try {
+    await rename(temporaryPath, destinationPath);
+  } catch (error) {
+    try {
+      await rename(backupPath, destinationPath);
+    } catch (restoreError) {
+      throw new AggregateError(
+        [error, restoreError],
+        `Failed to install the downloaded file and restore the original destination: ${destinationPath}`,
+      );
+    }
+    throw error;
+  }
+  await rm(backupPath, { force: true }).catch(() => {});
+}
+
+export async function handleDownloadFile(args: SshFileDownloadArgs) {
+  if (!path.isAbsolute(args.localPath)) {
+    throw new Error("localPath must be an absolute path on the Desktop computer");
+  }
+
+  const parentDirectory = path.dirname(args.localPath);
+  if (args.mkdir) {
+    await mkdir(parentDirectory, { recursive: true });
+  }
+
+  const existingDestination = await localStat(args.localPath);
+  if (existingDestination && !existingDestination.isFile()) {
+    throw new Error(`Local destination is not a file: ${args.localPath}`);
+  }
+  if (existingDestination && !args.overwrite) {
+    throw new Error(`Local destination already exists: ${args.localPath}. Pass overwrite=true to replace it.`);
+  }
+
+  const temporaryPath = path.join(
+    parentDirectory,
+    `.${path.basename(args.localPath)}.ssh-mcp-download-${randomBytes(8).toString("hex")}.tmp`,
+  );
+
+  try {
+    const downloadedBytes = await resolveClient(args, client =>
+      withSftp(client, args.timeout ?? 300000, async sftp => {
+        const remoteStat = await new Promise<import("ssh2").Stats>((resolve, reject) => {
+          sftp.stat(args.path, (error, value) => error ? reject(error) : resolve(value));
+        });
+        if (!remoteStat.isFile()) {
+          throw new Error(`Remote path is not a file: ${args.path}`);
+        }
+
+        await pipeline(
+          sftp.createReadStream(args.path),
+          createWriteStream(temporaryPath, { flags: "wx" }),
+        );
+
+        const downloadedStat = await stat(temporaryPath);
+        if (downloadedStat.size !== remoteStat.size) {
+          throw new Error(
+            `Downloaded size mismatch for ${args.path}: expected ${remoteStat.size} bytes, received ${downloadedStat.size}`,
+          );
+        }
+        return downloadedStat.size;
+      })
+    ) as number;
+
+    await installDownloadedFile(temporaryPath, args.localPath, args.overwrite ?? false);
+    return {
+      content: [{
+        type: "text" as const,
+        text: `Downloaded ${downloadedBytes} bytes from ${args.path} to ${args.localPath}`,
+      }],
+    };
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 // --- List ---

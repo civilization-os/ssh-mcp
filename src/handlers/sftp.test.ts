@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 
 // Use vi.doMock (non-hoisted) so each describe block gets its own mock scope.
 
@@ -73,6 +73,68 @@ describe("handleUploadFile", () => {
         expect.any(Function),
       );
       expect(result.content[0].text).toContain(`Uploaded ${expected.length} bytes`);
+    } finally {
+      await rm(localDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("handleDownloadFile", () => {
+  beforeEach(() => { vi.resetModules(); });
+
+  it("streams exact binary bytes to a temporary local file before installing it", async () => {
+    const localDirectory = await mkdtemp(path.join(tmpdir(), "ssh-mcp-download-"));
+    const localPath = path.join(localDirectory, "nested", "fixture.bin");
+    const expected = Buffer.from([0x00, 0xff, 0x80, 0x41, 0x0d, 0x0a, 0x20]);
+    const createReadStream = vi.fn(() => Readable.from([
+      expected.subarray(0, 3),
+      expected.subarray(3),
+    ]));
+
+    vi.doMock("../session.js", () => ({
+      resolveClient: vi.fn((_args: unknown, fn: (client: any) => Promise<unknown>) => fn({
+        sftp: vi.fn((callback: Function) => callback(null, makeSftp({
+          createReadStream,
+          stat: (_target: string, callback: Function) => callback(null, {
+            size: expected.length,
+            isFile: () => true,
+          }),
+        }))),
+      })),
+    }));
+
+    try {
+      const { handleDownloadFile } = await import("./sftp.js");
+      const result = await handleDownloadFile({
+        path: "/var/backups/fixture.bin",
+        localPath,
+        mkdir: true,
+      }) as any;
+
+      expect(await readFile(localPath)).toEqual(expected);
+      expect(createReadStream).toHaveBeenCalledWith("/var/backups/fixture.bin");
+      expect(await readdir(path.dirname(localPath))).toEqual(["fixture.bin"]);
+      expect(result.content[0].text).toContain(`Downloaded ${expected.length} bytes`);
+    } finally {
+      await rm(localDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to overwrite an existing local file by default", async () => {
+    const localDirectory = await mkdtemp(path.join(tmpdir(), "ssh-mcp-download-existing-"));
+    const localPath = path.join(localDirectory, "fixture.bin");
+    await writeFile(localPath, "keep me");
+    const resolveClient = vi.fn();
+    vi.doMock("../session.js", () => ({ resolveClient }));
+
+    try {
+      const { handleDownloadFile } = await import("./sftp.js");
+      await expect(handleDownloadFile({
+        path: "/var/backups/fixture.bin",
+        localPath,
+      })).rejects.toThrow("overwrite=true");
+      expect(await readFile(localPath, "utf8")).toBe("keep me");
+      expect(resolveClient).not.toHaveBeenCalled();
     } finally {
       await rm(localDirectory, { recursive: true, force: true });
     }
