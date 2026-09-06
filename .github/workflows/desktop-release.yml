@@ -51,8 +51,8 @@ jobs:
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $tag = "${{ github.ref_name }}"
           $assets = @(
-            "release/SSH-MCP Desktop-Setup-$version-x64.exe",
-            "release/SSH-MCP Desktop-Setup-$version-x64.exe.blockmap",
+            "release/SSH-MCP-Desktop-Setup-$version-x64.exe",
+            "release/SSH-MCP-Desktop-Setup-$version-x64.exe.blockmap",
             "release/latest.yml"
           )
           foreach ($asset in $assets) {

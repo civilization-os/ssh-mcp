@@ -31,7 +31,7 @@ win:
       arch:
         - x64
   icon: desktop/resources/icon.ico
-  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+  artifactName: SSH-MCP-Desktop-Setup-${version}-${arch}.${ext}
   requestedExecutionLevel: asInvoker
   verifyUpdateCodeSignature: true
 
