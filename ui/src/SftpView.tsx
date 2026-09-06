@@ -187,16 +187,18 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const remotePath = getFilePath(file.name);
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("path", getFilePath(file.name));
     try {
-      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/upload`, {
+      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/upload?path=${encodeURIComponent(remotePath)}`, {
         method: "POST",
         body: formData
       });
       const data = await res.json();
-      if (data.isError) throw new Error(data.content?.[0]?.text);
+      if (!res.ok || data.isError) {
+        throw new Error(data.error || data.content?.[0]?.text || `Upload failed (${res.status})`);
+      }
       showStatus(`✓ ${t("sftpUploadOk")}: ${file.name}`, "success");
       loadFiles(path);
     } catch (error: unknown) {

@@ -4,6 +4,7 @@ import {
   validateSshDisconnectArgs,
   validateSshFileReadArgs,
   validateSshFileWriteArgs,
+  validateSshFileUploadArgs,
   validateSshFileListArgs,
   validateSshFileDeleteArgs,
   validateSshFileRenameArgs,
@@ -86,6 +87,22 @@ describe("validateSshFileWriteArgs", () => {
 
   it("rejects null args", () => {
     expect(validateSshFileWriteArgs(null)).toBe(false);
+  });
+});
+
+describe("validateSshFileUploadArgs", () => {
+  it("accepts a local source and remote destination", () => {
+    expect(validateSshFileUploadArgs({
+      localPath: "C:\\build\\app.zip",
+      path: "/opt/app/app.zip",
+    })).toBe(true);
+  });
+
+  it("rejects a missing local or remote path", () => {
+    expect(validateSshFileUploadArgs({ path: "/opt/app/app.zip" })).toBe(false);
+    expect(validateSshFileUploadArgs({ localPath: "C:\\build\\app.zip" })).toBe(false);
+    expect(validateSshFileUploadArgs({ localPath: " ", path: "/opt/app/app.zip" })).toBe(false);
+    expect(validateSshFileUploadArgs({ localPath: "C:\\build\\app.zip", path: "" })).toBe(false);
   });
 });
 

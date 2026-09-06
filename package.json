@@ -1,6 +1,6 @@
 {
   "name": "ssh-mcp",
-  "version": "2.5.2",
+  "version": "2.5.3",
   "description": "Desktop-controlled MCP runtime for human-supervised SSH operations",
   "author": "civilization-os contributors",
   "type": "module",
@@ -29,12 +29,14 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
     "@xterm/headless": "^6.0.0",
+    "busboy": "^1.6.0",
     "electron-updater": "^6.8.9",
     "sirv": "^3.0.0",
     "ssh2": "^1.16.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {
+    "@types/busboy": "^1.5.4",
     "@types/node": "^22.0.0",
     "@types/ssh2": "^1.15.0",
     "@types/ws": "^8.18.1",

@@ -58,18 +58,18 @@ export function EditorView({ sessionId, filePath, onClose }: EditorViewProps) {
     setSaving(true);
     try {
       const formData = new FormData();
-      formData.append("path", filePath);
       const blob = new Blob([value], { type: "text/plain;charset=utf-8" });
       formData.append("file", blob, filePath.split('/').pop());
 
-      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/upload`, {
+      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/upload?path=${encodeURIComponent(filePath)}`, {
         method: "POST",
         body: formData,
       });
       if (res.ok) {
         showToast("已保存至服务器", "success");
       } else {
-        throw new Error("Save failed");
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || `Save failed (${res.status})`);
       }
     } catch {
       showToast("保存失败", "error");

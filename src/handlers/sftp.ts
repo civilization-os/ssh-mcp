@@ -1,8 +1,14 @@
 import { Client } from "ssh2";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { resolveClient } from "../session.js";
 import {
   SshFileReadArgs,
   SshFileWriteArgs,
+  SshFileUploadArgs,
   SshFileListArgs,
   SshFileDeleteArgs,
   SshFileRenameArgs,
@@ -88,6 +94,52 @@ export async function handleWriteFile(args: SshFileWriteArgs) {
     content: [{
       type: "text" as const,
       text: `Wrote ${args.content.length} bytes to ${args.path}`,
+    }],
+  };
+}
+
+// --- Upload local file ---
+
+export async function handleUploadFile(args: SshFileUploadArgs) {
+  if (!path.isAbsolute(args.localPath)) {
+    throw new Error("localPath must be an absolute path on the Desktop computer");
+  }
+
+  const localStat = await stat(args.localPath);
+  if (!localStat.isFile()) {
+    throw new Error(`Local path is not a file: ${args.localPath}`);
+  }
+
+  await resolveClient(args, client =>
+    withSftp(client, args.timeout ?? 300000, async sftp => {
+      if (args.mkdir) {
+        const dir = args.path.substring(0, args.path.lastIndexOf("/"));
+        if (dir) await sftpMkdir(sftp, dir, true);
+      }
+
+      const temporaryPath = `${args.path}.ssh-mcp-upload-${randomBytes(8).toString("hex")}.tmp`;
+      try {
+        await pipeline(
+          createReadStream(args.localPath),
+          sftp.createWriteStream(temporaryPath),
+        );
+        await new Promise<void>((resolve, reject) => {
+          sftp.rename(temporaryPath, args.path, error => error ? reject(error) : resolve());
+        });
+      } catch (error) {
+        await new Promise<void>(resolve => {
+          sftp.unlink(temporaryPath, () => resolve());
+        });
+        throw error;
+      }
+    })
+  );
+
+  globalEvents.emit("sftp_changed", { sessionId: args.sessionId, path: args.path });
+  return {
+    content: [{
+      type: "text" as const,
+      text: `Uploaded ${localStat.size} bytes from ${args.localPath} to ${args.path}`,
     }],
   };
 }

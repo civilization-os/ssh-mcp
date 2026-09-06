@@ -23,7 +23,7 @@ import {
 } from "./desktopRuntime.js";
 
 const server = new Server(
-  { name: "ssh-mcp-desktop", version: "2.5.1" },
+  { name: "ssh-mcp-desktop", version: "2.5.3" },
   {
     capabilities: {
       tools: { listChanged: true },
@@ -198,6 +198,22 @@ const TOOL_CATALOG = [
           mkdir: { type: "boolean", description: "Create parent directories if they don't exist", default: false },
         },
         required: ["path", "content"],
+      },
+    },
+    {
+      name: "ssh_file_upload",
+      description: "Stream a local file from the computer running SSH-MCP Desktop to a remote server via SFTP. Supports binary and large files without loading the complete file into memory.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session ID from ssh_connect" },
+          ...authFields,
+          localPath: { type: "string", description: "Absolute path to the source file on the SSH-MCP Desktop computer" },
+          path: { type: "string", description: "Absolute destination path on the remote server" },
+          mkdir: { type: "boolean", description: "Create remote parent directories if they do not exist", default: false },
+          timeout: { type: "number", description: "Upload timeout in milliseconds (default: 300000)", default: 300000 },
+        },
+        required: ["localPath", "path"],
       },
     },
     {

@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Writable } from "node:stream";
 
 // Use vi.doMock (non-hoisted) so each describe block gets its own mock scope.
 
@@ -29,6 +33,49 @@ describe("handleWriteFile", () => {
     }));
     const { handleWriteFile } = await import("./sftp.js");
     await expect(handleWriteFile({ path: "/tmp/test", content: "hello" })).rejects.toThrow("sftp write failed");
+  });
+});
+
+describe("handleUploadFile", () => {
+  beforeEach(() => { vi.resetModules(); });
+
+  it("streams an exact binary file to a temporary remote path before renaming", async () => {
+    const localDirectory = await mkdtemp(path.join(tmpdir(), "ssh-mcp-upload-"));
+    const localPath = path.join(localDirectory, "fixture.bin");
+    const expected = Buffer.from([0x00, 0xff, 0x80, 0x41, 0x0d, 0x0a, 0x20]);
+    await writeFile(localPath, expected);
+
+    const received: Buffer[] = [];
+    const createWriteStream = vi.fn(() => new Writable({
+      write(chunk, _encoding, callback) {
+        received.push(Buffer.from(chunk));
+        callback();
+      },
+    }));
+    const rename = vi.fn((_source: string, _destination: string, callback: Function) => callback(null));
+    const unlink = vi.fn((_target: string, callback: Function) => callback(null));
+
+    vi.doMock("../session.js", () => ({
+      resolveClient: vi.fn((_args: unknown, fn: (client: any) => Promise<unknown>) => fn({
+        sftp: vi.fn((callback: Function) => callback(null, makeSftp({ createWriteStream, rename, unlink }))),
+      })),
+    }));
+
+    try {
+      const { handleUploadFile } = await import("./sftp.js");
+      const result = await handleUploadFile({ localPath, path: "/opt/app/fixture.bin" }) as any;
+
+      expect(Buffer.concat(received)).toEqual(expected);
+      expect(createWriteStream.mock.calls[0][0]).toMatch(/^\/opt\/app\/fixture\.bin\.ssh-mcp-upload-[a-f0-9]+\.tmp$/);
+      expect(rename).toHaveBeenCalledWith(
+        createWriteStream.mock.calls[0][0],
+        "/opt/app/fixture.bin",
+        expect.any(Function),
+      );
+      expect(result.content[0].text).toContain(`Uploaded ${expected.length} bytes`);
+    } finally {
+      await rm(localDirectory, { recursive: true, force: true });
+    }
   });
 });
 

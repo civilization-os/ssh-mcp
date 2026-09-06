@@ -126,13 +126,13 @@ command = "C:\\Users\\YOUR_NAME\\AppData\\Local\\Programs\\SSH-MCP Desktop\\ssh-
 
 ## MCP 能力
 
-MCP 访问开启时，当前 Bridge 共发布 21 个工具。
+MCP 访问开启时，当前 Bridge 共发布 22 个工具。
 
 | 分组 | 工具 | 用途 |
 |---|---|---|
 | 会话 | `ssh_connect`、`ssh_disconnect`、`ssh_sessions`、`ssh_web_start` | 创建、恢复、查看或断开连接，也可打开本地工作台 |
 | 共享 Shell | `ssh_shell`、`ssh_shell_write`、`ssh_shell_read`、`ssh_shell_resize`、`ssh_shell_close`、`ssh_shell_list` | 操作长时间运行的交互式 PTY |
-| 文件 | `ssh_file_read`、`ssh_file_write`、`ssh_file_list`、`ssh_file_delete`、`ssh_file_rename`、`ssh_file_mkdir`、`ssh_file_chmod`、`ssh_file_stat` | 通过 SFTP 管理远程文件 |
+| 文件 | `ssh_file_read`、`ssh_file_write`、`ssh_file_upload`、`ssh_file_list`、`ssh_file_delete`、`ssh_file_rename`、`ssh_file_mkdir`、`ssh_file_chmod`、`ssh_file_stat` | 通过 SFTP 管理远程文件并流式上传本地二进制文件 |
 | 监控 | `ssh_sysinfo`、`ssh_processes`、`ssh_disk_usage` | 查看远程系统、进程和存储状态 |
 
 MCP 资源提供当前会话、Shell 状态和渲染后的终端输出：
@@ -140,6 +140,8 @@ MCP 资源提供当前会话、Shell 状态和渲染后的终端输出：
 - `mcp://ssh/sessions`
 - `mcp://ssh/shells`
 - `mcp://ssh/shell/{shellId}/output`
+
+`ssh_file_upload` 接收 Desktop 电脑上的绝对路径 `localPath` 和远程目标 `path`。文件会先流式写入远程临时路径，传输完成后再重命名，因此二进制文件和大文件无需经过 JSON 或完整内存缓冲。
 
 ## 安全与本地数据
 
@@ -207,7 +209,7 @@ ui/src/                  # React Desktop 渲染器
 
 ## 发布
 
-`v2.5.2` 这样的标签必须与 `package.json` 中的版本一致。Desktop Release 工作流会校验版本、执行类型检查和测试、构建 Windows NSIS 安装包，并发布 APP 在线更新所需的安装包、block map 和 `latest.yml`。
+`v2.5.3` 这样的标签必须与 `package.json` 中的版本一致。Desktop Release 工作流会校验版本、执行类型检查和测试、构建 Windows NSIS 安装包，并发布 APP 在线更新所需的安装包、block map 和 `latest.yml`。
 
 ## 许可证
 

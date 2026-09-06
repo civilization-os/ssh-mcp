@@ -12,6 +12,7 @@ import {
 import {
   handleReadFile,
   handleWriteFile,
+  handleUploadFile,
   handleListDir,
   handleDelete,
   handleRename,
@@ -39,6 +40,7 @@ import {
   validateSshDisconnectArgs,
   validateSshFileReadArgs,
   validateSshFileWriteArgs,
+  validateSshFileUploadArgs,
   validateSshFileListArgs,
   validateSshFileDeleteArgs,
   validateSshFileRenameArgs,
@@ -229,6 +231,13 @@ export async function handleMcpToolCall(name: string, args: any, globalHttpPort:
           throw new McpError(ErrorCode.InvalidParams, "path and content are required");
         }
         return await handleWriteFile(args);
+      }
+
+      case "ssh_file_upload": {
+        if (!validateSshFileUploadArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "localPath and path are required");
+        }
+        return await handleUploadFile(args);
       }
 
       case "ssh_file_list": {

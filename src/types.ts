@@ -99,6 +99,14 @@ export type SshFileWriteArgs = {
   timeout?: number;
 } & Partial<SshCredentials>;
 
+export type SshFileUploadArgs = {
+  sessionId?: string;
+  localPath: string;
+  path: string;
+  mkdir?: boolean;
+  timeout?: number;
+} & Partial<SshCredentials>;
+
 export type SshFileListArgs = {
   sessionId?: string;
   path: string;
@@ -258,6 +266,12 @@ export function validateSshFileReadArgs(args: unknown): args is SshFileReadArgs 
 
 export function validateSshFileWriteArgs(args: unknown): args is SshFileWriteArgs {
   return isRecord(args) && typeof args.path === "string" && typeof args.content === "string";
+}
+
+export function validateSshFileUploadArgs(args: unknown): args is SshFileUploadArgs {
+  return isRecord(args) &&
+    typeof args.localPath === "string" && args.localPath.trim().length > 0 &&
+    typeof args.path === "string" && args.path.trim().length > 0;
 }
 
 export function validateSshFileListArgs(args: unknown): args is SshFileListArgs {

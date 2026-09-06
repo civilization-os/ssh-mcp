@@ -1,10 +1,12 @@
 import http from "http";
 import fs from "fs";
 import path from "path";
+import { randomBytes } from "crypto";
 import { fileURLToPath } from "url";
 import sirv from "sirv";
 import { WebSocketServer, WebSocket, createWebSocketStream } from "ws";
-import { listSessions, disconnectSession } from "./session.js";
+import type { SFTPWrapper } from "ssh2";
+import { listSessions, disconnectSession, resolveClient } from "./session.js";
 import {
   attachWsToShell,
   detachWsFromShell,
@@ -13,6 +15,7 @@ import {
   resizeShell,
 } from "./handlers/shell.js";
 import { globalEvents } from "./eventBus.js";
+import { MultipartUploadError, streamMultipartFile } from "./multipartUpload.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // UI assets are located in the sibling 'ui/dist' folder relative to 'build/'
@@ -521,105 +524,59 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
       return;
     }
 
-    // SFTP UPLOAD  POST /api/sessions/:id/sftp/upload  multipart/form-data
+    // SFTP UPLOAD  POST /api/sessions/:id/sftp/upload?path=/remote/file  multipart/form-data
     const sftpUploadMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/sftp\/upload$/);
     if (sftpUploadMatch && req.method === "POST") {
       const sessionId = sftpUploadMatch[1];
-      const chunks: Buffer[] = [];
-      let totalSize = 0;
-      const MAX_UPLOAD_SIZE = 500 * 1024 * 1024; // 500MB
-      req.on("data", c => {
-        totalSize += (c as Buffer).length;
-        if (totalSize > MAX_UPLOAD_SIZE) {
-          req.destroy(new Error("Upload too large"));
-          return;
-        }
-        chunks.push(c);
-      });
-      req.on("end", async () => {
-        try {
-          const raw = Buffer.concat(chunks);
-          const boundaryRaw = Buffer.from("--" + ((req.headers["content-type"] || "").split("boundary=")[1] || ""));
-          if (boundaryRaw.length <= 2) throw new Error("No boundary in multipart");
+      const uploadPath = url.searchParams.get("path")?.trim() ?? "";
+      if (!uploadPath) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ isError: true, error: "Remote upload path is required" }));
+        return;
+      }
 
-          // Parse multipart: split by boundary
-          const parts: Buffer[] = [];
-          let start = 0;
-          while (true) {
-            const idx = raw.indexOf(boundaryRaw, start);
-            if (idx === -1) break;
-            start = idx + boundaryRaw.length;
-            // Skip the trailing -- and newlines
-            if (start >= raw.length) break;
-            if (raw[start] === 45 /* - */ || raw[start] === 13 /* \r */) {
-              const nextEnd = raw.indexOf(boundaryRaw, start);
-              if (nextEnd !== -1) {
-                // There's another boundary — capture the part before it
-                const part = raw.slice(start, nextEnd).toString("utf-8");
-                if (part.includes("name=\"file\"")) {
-                  // Find the double CRLF that separates headers from body
-                  const headerEnd = raw.indexOf(Buffer.from("\r\n\r\n"), start);
-                  if (headerEnd !== -1 && headerEnd < nextEnd) {
-                    const bodyStart = headerEnd + 4;
-                    const bodyEnd = nextEnd - 2; // trim trailing \r\n
-                    if (bodyEnd > bodyStart) {
-                      parts.push(raw.slice(bodyStart, bodyEnd));
-                    }
-                  }
-                }
-              }
-              break;
-            }
-          }
-
-          // Extract text parts the simpler way: find "path" and "file" fields
-          const bodyStr = raw.toString("utf-8");
-          const textParts = bodyStr.split(boundaryRaw.toString("utf-8"))
-            .filter(p => !p.startsWith("--") && p.trim());
-
-          let uploadPath = "";
-          let fileBuffer: Buffer | null = null;
-
-          for (const p of textParts) {
-            const [rawHead, ...bodyLines] = p.split("\r\n\r\n");
-            const body = bodyLines.join("\r\n\r\n").replace(/\r\n$/, "").trimEnd();
-            if (rawHead.includes("name=\"path\"")) {
-              uploadPath = body;
-            } else if (rawHead.includes("name=\"file\"")) {
-              fileBuffer = Buffer.from(body, "latin1");
-            }
-          }
-
-          // Fallback: if we couldn't find file via text parsing, try buffer parsing
-          if (!fileBuffer && parts.length > 0) {
-            fileBuffer = parts[0]; // use the first binary part found
-          }
-
-          if (!uploadPath || !fileBuffer) throw new Error("Missing path or file in upload");
-
-          // Write the file directly via SFTP — bypass handleWriteFile to avoid text encoding
-          const { resolveClient } = await import("./session.js");
-          await resolveClient({ sessionId }, async (client: any) => {
-            return new Promise((resolve, reject) => {
-              client.sftp((err: any, sftp: any) => {
-                if (err) return reject(err);
-                const stream = sftp.createWriteStream(uploadPath);
-                stream.on("close", () => { try { sftp.end(); } catch {} resolve(undefined); });
-                stream.on("error", (e: any) => { try { sftp.end(); } catch {} reject(e); });
-                stream.end(fileBuffer);
-              });
-            });
+      try {
+        const upload = await resolveClient({ sessionId }, async client => {
+          const sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
+            client.sftp((error, channel) => error ? reject(error) : resolve(channel));
           });
+          const temporaryPath = `${uploadPath}.ssh-mcp-upload-${randomBytes(8).toString("hex")}.tmp`;
+          let writeStarted = false;
 
-          globalEvents.emit("sftp_changed", { sessionId, path: uploadPath });
+          try {
+            const result = await streamMultipartFile(req, req.headers, () => {
+              writeStarted = true;
+              return sftp.createWriteStream(temporaryPath);
+            });
+            await new Promise<void>((resolve, reject) => {
+              sftp.rename(temporaryPath, uploadPath, error => error ? reject(error) : resolve());
+            });
+            return result;
+          } catch (error) {
+            if (writeStarted) {
+              await new Promise<void>(resolve => {
+                sftp.unlink(temporaryPath, () => resolve());
+              });
+            }
+            throw error;
+          } finally {
+            try { sftp.end(); } catch {}
+          }
+        }) as { bytesWritten: number; filename: string; mimeType: string };
 
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ content: [{ type: "text", text: `Uploaded ${fileBuffer.length} bytes to ${uploadPath}` }] }));
-        } catch (err: any) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ isError: true, error: err.message }));
-        }
-      });
+        globalEvents.emit("sftp_changed", { sessionId, path: uploadPath });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          content: [{ type: "text", text: `Uploaded ${upload.bytesWritten} bytes to ${uploadPath}` }],
+          bytesWritten: upload.bytesWritten,
+          path: uploadPath,
+        }));
+      } catch (error) {
+        const statusCode = error instanceof MultipartUploadError ? error.statusCode : 500;
+        const message = error instanceof Error ? error.message : "Upload failed";
+        res.writeHead(statusCode, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ isError: true, error: message }));
+      }
       return;
     }
 
