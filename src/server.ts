@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import sirv from "sirv";
 import { WebSocketServer, WebSocket, createWebSocketStream } from "ws";
 import type { SFTPWrapper } from "ssh2";
-import { listSessions, disconnectSession, resolveClient } from "./session.js";
+import { listSessions, disconnectSession, deleteSession, resolveClient } from "./session.js";
 import {
   attachWsToShell,
   detachWsFromShell,
@@ -21,7 +21,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // UI assets are located in the sibling 'ui/dist' folder relative to 'build/'
 const uiDistPath = path.resolve(__dirname, "..", "ui", "dist");
 // dev: true forces sirv to always read from disk instead of caching in RAM
-const serve = sirv(uiDistPath, { dev: true, single: true });
+const serve = sirv(uiDistPath, {
+  dev: true,
+  single: true,
+  setHeaders: (res, pathname) => {
+    if (pathname === "/" || pathname === "/index.html" || pathname.endsWith(".html") || pathname.endsWith("sw.js")) {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    }
+  }
+});
 
 export interface HttpServerStartResult {
   port: number;
@@ -328,6 +338,26 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
 
     if (sessionDeleteMatch && req.method === "DELETE") {
       const sessionId = sessionDeleteMatch[1];
+      try {
+        const ok = await deleteSession(sessionId);
+        if (ok) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, message: `Session ${sessionId} deleted` }));
+        } else {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: "Session not found" }));
+        }
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+      return;
+    }
+
+    // POST /api/sessions/:sessionId/disconnect
+    const sessionDisconnectMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/disconnect$/);
+    if (sessionDisconnectMatch && req.method === "POST") {
+      const sessionId = sessionDisconnectMatch[1];
       try {
         const ok = disconnectSession(sessionId);
         if (ok) {

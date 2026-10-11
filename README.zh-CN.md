@@ -211,7 +211,7 @@ ui/src/                  # React Desktop 渲染器
 
 ## 发布
 
-`v2.5.4` 这样的标签必须与 `package.json` 中的版本一致。Desktop Release 工作流会校验版本、执行类型检查和测试、构建 Windows NSIS 安装包，并发布 APP 在线更新所需的安装包、block map 和 `latest.yml`。
+`v2.5.5` 这样的标签必须与 `package.json` 中的版本一致。Desktop Release 工作流会校验版本、执行类型检查和测试、构建 Windows NSIS 安装包，并发布 APP 在线更新所需的安装包、block map 和 `latest.yml`。
 
 ## 许可证
 

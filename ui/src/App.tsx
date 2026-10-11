@@ -10,7 +10,11 @@ import { translations } from "./i18n";
 import type { Language } from "./i18n";
 import { DesktopSettingsControl } from "./DesktopSettings";
 import { McpSetupControl } from "./McpSetup";
-import { Activity, ChevronLeft, ChevronRight, FileText, Pencil, Plus, Server, ShieldCheck, TerminalSquare, Trash2 } from "lucide-react";
+import {
+  Activity, ChevronLeft, ChevronRight, FileText, Pencil, Plus, Server,
+  ShieldCheck, TerminalSquare, Trash2, Key, Lock, X, Check, Copy,
+  RotateCcw, Maximize2, Minimize2, Sparkles, CornerDownLeft
+} from "lucide-react";
 
 interface SshSession {
   id: string;
@@ -243,6 +247,8 @@ export default function App() {
   const [activeShellId, setActiveShellId] = useState<string>("");
   
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [terminalMaximized, setTerminalMaximized] = useState(false);
+  const [tabCustomNames, setTabCustomNames] = useState<Record<string, string>>({});
   
   // Navigation Tabs
   const [activeTab, setActiveTab] = useState<"terminal" | "sftp" | "monitor">("terminal");
@@ -308,29 +314,41 @@ export default function App() {
     setShowCreateModal(true);
   };
 
-  // Polling for sessions and shells
+  // Polling & SSE for sessions and shells
   useEffect(() => {
+    let active = true;
     const fetchData = async () => {
       try {
         const start = performance.now();
         const sRes = await fetch(`${API_BASE}/api/sessions`);
         const sData = await sRes.json();
+        if (!active) return;
         const latency = Math.round(performance.now() - start);
         setPingMs(latency);
         setSessions(sData);
 
         const vRes = await fetch(`${API_BASE}/api/version`).catch(() => null);
-        if (vRes?.ok) {
+        if (vRes?.ok && active) {
           const vData = await vRes.json();
           if (vData.version) setServerVersion(vData.version);
         }
 
         const shRes = await fetch(`${API_BASE}/api/shells`);
         const shData = await shRes.json();
+        if (!active) return;
         setShells(shData);
 
-        if (sData.length > 0 && !selectedSessionId) {
-          setSelectedSessionId(sData[0].id);
+        if (sData.length > 0) {
+          setSelectedSessionId(prev => {
+            if (!prev || !sData.some((s: SshSession) => s.id === prev)) {
+              return sData[0].id;
+            }
+            return prev;
+          });
+        } else {
+          setSelectedSessionId("");
+          setActiveShellId("");
+          setSecondaryPane(null);
         }
       } catch (err) {
         console.error("Error fetching sessions/shells:", err);
@@ -339,8 +357,24 @@ export default function App() {
 
     fetchData();
     const timer = setInterval(fetchData, 3000);
-    return () => clearInterval(timer);
-  }, [selectedSessionId]);
+
+    let sse: EventSource | null = null;
+    try {
+      sse = new EventSource(`${API_BASE}/api/events`);
+      sse.addEventListener("sessions_changed", () => {
+        if (active) fetchData();
+      });
+      sse.addEventListener("shells_changed", () => {
+        if (active) fetchData();
+      });
+    } catch {}
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+      if (sse) sse.close();
+    };
+  }, []);
 
   const handleOpenShell = async () => {
     if (!selectedSessionId) return;
@@ -423,16 +457,75 @@ export default function App() {
     const { id } = confirmTarget;
     setConfirmTarget(null);
     try {
-      await fetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE" });
-      setSessions(prev => prev.filter(s => s.id !== id));
-      setShells(prev => prev.filter(s => s.sessionId !== id));
-      if (selectedSessionId === id) {
-        setSelectedSessionId("");
-        setActiveShellId("");
+      const res = await fetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("Failed to delete session:", errorText);
+        return;
       }
+      setSessions(prev => {
+        const remaining = prev.filter(s => s.id !== id);
+        if (selectedSessionId === id) {
+          const nextSelected = remaining[0]?.id || "";
+          setSelectedSessionId(nextSelected);
+          setActiveShellId("");
+          setSecondaryPane(null);
+        }
+        return remaining;
+      });
+      setShells(prev => prev.filter(s => s.sessionId !== id));
     } catch (err) {
       console.error("Failed to delete session:", err);
     }
+  };
+
+  // Auto-select first active shell for selected session if activeShellId is unset or invalid
+  useEffect(() => {
+    if (selectedSessionId && shells.length > 0) {
+      const currentShells = shells.filter(s => s.sessionId === selectedSessionId && !s.closed);
+      if (currentShells.length > 0) {
+        if (!activeShellId || !shells.some(s => s.id === activeShellId && s.sessionId === selectedSessionId)) {
+          setActiveShellId(currentShells[0].id);
+        }
+      }
+    }
+  }, [selectedSessionId, shells, activeShellId]);
+
+  // Global ESC key listener for modal closing
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (showCreateModal) {
+          setShowCreateModal(false);
+          resetSessionForm();
+        }
+        if (confirmTarget) {
+          setConfirmTarget(null);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showCreateModal, confirmTarget]);
+
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleStartSplitResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!isDragging.current || !splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const newWidth = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+      setSplitWidth(Math.max(15, Math.min(85, newWidth)));
+    };
+    const onMouseUp = () => {
+      isDragging.current = false;
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
   };
 
   const handleCloseShell = async (shellId: string) => {
@@ -440,7 +533,8 @@ export default function App() {
       await fetch(`${API_BASE}/api/shells/${shellId}`, { method: "DELETE" });
       setShells(prev => prev.filter(s => s.id !== shellId));
       if (activeShellId === shellId) {
-        setActiveShellId("");
+        const remaining = shells.filter(s => s.sessionId === selectedSessionId && s.id !== shellId && !s.closed);
+        setActiveShellId(remaining.length > 0 ? remaining[0].id : "");
       }
     } catch (err) {
       console.error("Failed to close shell:", err);
@@ -714,7 +808,7 @@ export default function App() {
                       title={lang === "zh" ? "关闭此终端" : "Close terminal"}
                       className="shadcn-btn shadcn-btn-ghost shell-close-btn"
                     >
-                      x
+                      <X size={12} />
                     </button>
                   </div>
                 ))
@@ -767,22 +861,27 @@ export default function App() {
               onEdit={openEditModal}
             />
             <div 
+              ref={splitContainerRef}
               style={{ flex: 1, position: "relative", overflow: "hidden", width: "100%", display: "flex" }}
-              onMouseMove={(e) => {
-                if (!isDragging.current) return;
-                const container = e.currentTarget;
-                const rect = container.getBoundingClientRect();
-                const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
-                setSplitWidth(Math.max(10, Math.min(90, newWidth)));
-              }}
-              onMouseUp={() => isDragging.current = false}
-              onMouseLeave={() => isDragging.current = false}
             >
               <div style={{ width: secondaryPane ? `${splitWidth}%` : "100%", height: "100%", overflow: "hidden", display: "flex", flexDirection: "column" }}>
                 <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", overflow: "hidden", position: "relative" }}>
-                  <div style={{ display: activeTab === "terminal" ? "flex" : "none", flex: 1, height: "100%", width: "100%", overflow: "hidden" }}>
+                  <div style={{ display: activeTab === "terminal" ? "flex" : "none", flex: 1, height: "100%", width: "100%", overflow: "hidden", flexDirection: "column" }}>
                     {activeShellId ? (
-                      <XtermView shellId={activeShellId} key={activeShellId} lang={lang} />
+                      <XtermView
+                        shellId={activeShellId}
+                        key={activeShellId}
+                        lang={lang}
+                        shells={filteredShells}
+                        activeShellId={activeShellId}
+                        onSelectShell={setActiveShellId}
+                        onCloseShell={handleCloseShell}
+                        onNewShell={handleOpenShell}
+                        tabNames={tabCustomNames}
+                        onRenameTab={(id, name) => setTabCustomNames(prev => ({ ...prev, [id]: name }))}
+                        isMaximized={terminalMaximized}
+                        onToggleMaximize={() => setTerminalMaximized(prev => !prev)}
+                      />
                     ) : (
                       <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center" }}>
                         <div className="shadcn-card" style={{ padding: "40px", maxWidth: "480px", textAlign: "center", margin: "20px" }}>
@@ -793,7 +892,8 @@ export default function App() {
                           <p style={{ color: "hsl(var(--muted-foreground))", fontSize: "13px", lineHeight: "1.5" }}>
                             {t("welcomeDesc")}
                           </p>
-                          <button className="shadcn-btn shadcn-btn-primary" onClick={handleOpenShell} style={{ marginTop: "20px", padding: "10px 24px" }}>
+                          <button className="shadcn-btn shadcn-btn-primary" onClick={handleOpenShell} style={{ marginTop: "20px", padding: "10px 24px", display: "inline-flex", gap: "6px", alignItems: "center" }}>
+                            <Plus size={15} />
                             {t("newBtn")}
                           </button>
                         </div>
@@ -813,18 +913,17 @@ export default function App() {
                 <>
                   <div 
                     style={{ 
-                      width: "4px", 
+                      width: "5px", 
                       height: "100%", 
                       cursor: "col-resize", 
                       backgroundColor: "transparent",
                       zIndex: 10,
                       position: "relative"
                     }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      isDragging.current = true;
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "hsl(var(--border))"}
+                    onMouseDown={handleStartSplitResize}
+                    onDoubleClick={() => setSplitWidth(50)}
+                    title={lang === "zh" ? "拖拽调整宽度，双击恢复 50:50" : "Drag to resize, double-click to reset 50:50"}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "rgba(45, 212, 191, 0.4)"}
                     onMouseLeave={(e) => { if (!isDragging.current) e.currentTarget.style.backgroundColor = "transparent"; }}
                   >
                     {/* Visual line */}
@@ -847,19 +946,22 @@ export default function App() {
 
       {/* ===== Confirm Delete Modal ===== */}
       {confirmTarget && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          background: "rgba(0,0,0,0.75)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1100,
-        }}>
+        <div 
+          onClick={(e) => { if (e.target === e.currentTarget) setConfirmTarget(null); }}
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.75)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1100,
+          }}
+        >
           <div className="shadcn-card" style={{
             width: "420px",
             padding: "24px",
@@ -934,19 +1036,22 @@ export default function App() {
 
       {/* Create / Edit Connection Modal */}
       {showCreateModal && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          background: "rgba(0,0,0,0.75)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1000,
-        }}>
+        <div 
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowCreateModal(false); resetSessionForm(); } }}
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.75)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+        >
           <form onSubmit={handleConnect} className="shadcn-card" style={{
             width: "480px",
             padding: "24px",
@@ -996,7 +1101,7 @@ export default function App() {
                 />
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", width: "100px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px", width: "110px" }}>
                 <label style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>{t("port")} *</label>
                 <input
                   type="text"
@@ -1006,6 +1111,19 @@ export default function App() {
                   onChange={e => setPortInput(e.target.value)}
                   className="shadcn-input"
                 />
+                <div style={{ display: "flex", gap: "4px" }}>
+                  {["22", "2222", "2200"].map(p => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setPortInput(p)}
+                      className="shadcn-btn shadcn-btn-ghost"
+                      style={{ padding: "1px 5px", height: "18px", fontSize: "10px", color: portInput === p ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))", fontWeight: portInput === p ? 700 : 400 }}
+                    >
+                      :{p}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1023,23 +1141,23 @@ export default function App() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               <label style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>{t("authMethod")}</label>
-              <div style={{ display: "flex", gap: "12px" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", cursor: "pointer" }}>
-                  <input
-                    type="radio"
-                    checked={authMethodInput === "password"}
-                    onChange={() => setAuthMethodInput("password")}
-                  />
-                  {t("authPassword")}
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", cursor: "pointer" }}>
-                  <input
-                    type="radio"
-                    checked={authMethodInput === "privateKey"}
-                    onChange={() => setAuthMethodInput("privateKey")}
-                  />
-                  {t("authPrivateKey")}
-                </label>
+              <div style={{ display: "flex", gap: "6px", background: "hsl(var(--secondary))", padding: "3px", borderRadius: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => setAuthMethodInput("password")}
+                  className={`shadcn-btn ${authMethodInput === "password" ? "shadcn-btn-primary" : "shadcn-btn-ghost"}`}
+                  style={{ flex: 1, height: "30px", fontSize: "12px", gap: "6px" }}
+                >
+                  <Lock size={13} /> {t("authPassword")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuthMethodInput("privateKey")}
+                  className={`shadcn-btn ${authMethodInput === "privateKey" ? "shadcn-btn-primary" : "shadcn-btn-ghost"}`}
+                  style={{ flex: 1, height: "30px", fontSize: "12px", gap: "6px" }}
+                >
+                  <Key size={13} /> {t("authPrivateKey")}
+                </button>
               </div>
             </div>
 
@@ -1195,8 +1313,8 @@ function InlineInfoItem({ label, value, iconType }: { label: string; value: stri
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0, fontSize: "12px" }}>
       {getIcon()}
-      <span style={{ color: "hsl(var(--muted-foreground))", opacity: 0.8 }}>{label}:</span>
-      <span style={{ color: "hsl(var(--foreground))", fontWeight: 500, whiteSpace: "nowrap" }} title={value}>{value}</span>
+      <span style={{ color: "#94a3b8", fontWeight: 400 }}>{label}:</span>
+      <span style={{ color: "#f1f5f9", fontWeight: 600, whiteSpace: "nowrap" }} title={value}>{value}</span>
     </div>
   );
 }
@@ -1206,54 +1324,144 @@ function InlineInfoItem({ label, value, iconType }: { label: string; value: stri
 interface XtermViewProps {
   shellId: string;
   lang: Language;
+  shells: ShellSession[];
+  activeShellId: string;
+  onSelectShell: (id: string) => void;
+  onCloseShell: (id: string) => void;
+  onNewShell: () => void;
+  tabNames: Record<string, string>;
+  onRenameTab: (id: string, name: string) => void;
+  isMaximized: boolean;
+  onToggleMaximize: () => void;
 }
 
-function XtermView({ shellId, lang }: XtermViewProps) {
+const QUICK_COMMANDS = [
+  { label: "ls -lah", cmd: "ls -lah" },
+  { label: "clear", cmd: "clear" },
+  { label: "htop / top", cmd: "top" },
+  { label: "df -h", cmd: "df -h" },
+  { label: "free -m", cmd: "free -m" },
+  { label: "ps aux", cmd: "ps aux" },
+  { label: "docker ps", cmd: "docker ps" },
+  { label: "ip a", cmd: "ip a" },
+  { label: "netstat", cmd: "netstat -tulnp 2>/dev/null || ss -tulnp" },
+  { label: "git status", cmd: "git status" },
+  { label: "exit", cmd: "exit" },
+];
+
+function XtermView({
+  shellId,
+  lang,
+  shells,
+  activeShellId,
+  onSelectShell,
+  onCloseShell,
+  onNewShell,
+  tabNames,
+  onRenameTab,
+  isMaximized,
+  onToggleMaximize,
+}: XtermViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const autoScrollRef = useRef(true);
+  const hbTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [isHeartbeating, setIsHeartbeating] = useState<boolean>(false);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
   const [fontSize, setFontSize] = useState(13);
   const [autoScroll, setAutoScroll] = useState(true);
   const [terminalSize, setTerminalSize] = useState({ cols: 0, rows: 0 });
+  const [hasCopied, setHasCopied] = useState(false);
+  const [showQuickCmds, setShowQuickCmds] = useState(false);
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTabName, setEditingTabName] = useState("");
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [customCmdInput, setCustomCmdInput] = useState("");
 
   const t = (key: keyof typeof translations["en"]): string => {
     return translations[lang][key] || translations["en"][key] || "";
   };
 
+  const connectSocket = () => {
+    if (socketRef.current) {
+      try { socketRef.current.close(); } catch {}
+    }
+    const wsUrl = `${WS_BASE}/ws/shell?shellId=${encodeURIComponent(shellId)}`;
+    const socket = new WebSocket(wsUrl);
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      setIsSocketConnected(true);
+      if (terminalRef.current) {
+        socket.send(`\x01RS${terminalRef.current.cols},${terminalRef.current.rows}`);
+      }
+    };
+
+    socket.onmessage = (event) => {
+      if (typeof event.data === "string" && event.data === "\x01HB") {
+        setIsHeartbeating(true);
+        if (hbTimeoutRef.current) clearTimeout(hbTimeoutRef.current);
+        hbTimeoutRef.current = setTimeout(() => {
+          setIsHeartbeating(false);
+        }, 1500);
+      } else {
+        terminalRef.current?.write(event.data);
+        if (autoScrollRef.current) terminalRef.current?.scrollToBottom();
+      }
+    };
+
+    socket.onclose = () => {
+      setIsSocketConnected(false);
+      terminalRef.current?.write("\r\n\r\n\x1b[33m[WebSocket connection disconnected]\x1b[0m\r\n");
+    };
+  };
+
   useEffect(() => {
     if (!containerRef.current) return;
-    let hbTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const term = new Terminal({
       cursorBlink: true,
+      cursorStyle: "bar",
+      cursorWidth: 2,
       fontSize: 13,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-      scrollback: 10000,
+      fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, Menlo, Monaco, "Courier New", monospace',
+      lineHeight: 1.25,
+      letterSpacing: 0.3,
+      scrollback: 15000,
+      smoothScrollDuration: 100,
+      convertEol: true,
       theme: {
-        background: "#091019",
-        foreground: "#d8e2ec",
-        cursor: "#5eead4",
-        cursorAccent: "#091019",
-        selectionBackground: "#1f3f48",
+        background: "#080e18",
+        foreground: "#e2e8f0",
+        cursor: "#2dd4bf",
+        cursorAccent: "#080e18",
+        selectionBackground: "rgba(45, 212, 191, 0.28)",
+        selectionInactiveBackground: "rgba(45, 212, 191, 0.15)",
         black: "#0b121b",
-        red: "#fb7185",
-        green: "#5eead4",
-        yellow: "#fbbf24",
-        blue: "#7dd3fc",
-        magenta: "#c4b5fd",
-        cyan: "#67e8f9",
-        white: "#e8eef4",
-        brightBlack: "#64748b",
+        red: "#f43f5e",
+        green: "#10b981",
+        yellow: "#f59e0b",
+        blue: "#38bdf8",
+        magenta: "#c084fc",
+        cyan: "#22d3ee",
+        white: "#f1f5f9",
+        brightBlack: "#475569",
+        brightRed: "#fb7185",
+        brightGreen: "#34d399",
+        brightYellow: "#fbbf24",
+        brightBlue: "#60a5fa",
+        brightMagenta: "#e879f9",
+        brightCyan: "#67e8f9",
+        brightWhite: "#ffffff",
       }
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    
+
     term.open(containerRef.current);
     fitAddon.fit();
     setTerminalSize({ cols: term.cols, rows: term.rows });
@@ -1261,50 +1469,35 @@ function XtermView({ shellId, lang }: XtermViewProps) {
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    const wsUrl = `${WS_BASE}/ws/shell?shellId=${encodeURIComponent(shellId)}`;
-    const socket = new WebSocket(wsUrl);
-    socketRef.current = socket;
-    const syncTerminalSize = () => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(`\x01RS${term.cols},${term.rows}`);
-      }
-    };
-    socket.onopen = () => {
-      setIsSocketConnected(true);
-      syncTerminalSize();
-    };
+    connectSocket();
 
-    socket.onmessage = (event) => { 
-      if (typeof event.data === "string" && event.data === "\x01HB") {
-        setIsHeartbeating(true);
-        if (hbTimeout) clearTimeout(hbTimeout);
-        hbTimeout = setTimeout(() => {
-          setIsHeartbeating(false);
-        }, 1500);
-      } else {
-        term.write(event.data);
-        if (autoScrollRef.current) term.scrollToBottom();
-      }
-    };
-    socket.onclose = () => {
-      setIsSocketConnected(false);
-      term.write("\r\n\r\n[WebSocket connection disconnected]\r\n");
-    };
     term.onData((data) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(data);
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(data);
+      }
     });
 
     const handleResize = () => {
       fitAddon.fit();
       setTerminalSize({ cols: term.cols, rows: term.rows });
-      syncTerminalSize();
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(`\x01RS${term.cols},${term.rows}`);
+      }
     };
     window.addEventListener("resize", handleResize);
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isMaximized) {
+        onToggleMaximize();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
     return () => {
-      if (hbTimeout) clearTimeout(hbTimeout);
+      if (hbTimeoutRef.current) clearTimeout(hbTimeoutRef.current);
       window.removeEventListener("resize", handleResize);
-      socket.close();
+      window.removeEventListener("keydown", handleKeyDown);
+      socketRef.current?.close();
       term.dispose();
     };
   }, [shellId]);
@@ -1323,9 +1516,48 @@ function XtermView({ shellId, lang }: XtermViewProps) {
     }
   }, [fontSize]);
 
+  // Context menu: copy selection or paste clipboard
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleContextMenu = async (e: MouseEvent) => {
+      e.preventDefault();
+      const term = terminalRef.current;
+      if (!term) return;
+
+      const selection = term.getSelection();
+      if (selection && selection.length > 0) {
+        await navigator.clipboard.writeText(selection);
+        term.clearSelection();
+        setToastMsg(lang === "zh" ? "✓ 已复制选中内容" : "✓ Copied selection");
+        setTimeout(() => setToastMsg(null), 1800);
+      } else {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text && socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(text);
+            setToastMsg(t("terminalPasted"));
+            setTimeout(() => setToastMsg(null), 1800);
+          }
+        } catch {
+          // ignore permission issue
+        }
+      }
+    };
+
+    container.addEventListener("contextmenu", handleContextMenu);
+    return () => {
+      container.removeEventListener("contextmenu", handleContextMenu);
+    };
+  }, [lang]);
+
   const writeControl = (input: string) => {
     const socket = socketRef.current;
-    if (socket?.readyState === WebSocket.OPEN) socket.send(input);
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(input);
+      terminalRef.current?.focus();
+    }
   };
 
   const copyTerminalOutput = async () => {
@@ -1337,62 +1569,258 @@ function XtermView({ shellId, lang }: XtermViewProps) {
       lines.push(buffer.getLine(i)?.translateToString(true) ?? "");
     }
     await navigator.clipboard.writeText(lines.join("\n").trimEnd());
+    setHasCopied(true);
+    setToastMsg(lang === "zh" ? "✓ 已复制全部终端输出" : "✓ Terminal output copied");
+    setTimeout(() => {
+      setHasCopied(false);
+      setToastMsg(null);
+    }, 2000);
+  };
+
+  const sendQuickCommand = (cmd: string) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(cmd + "\r");
+      terminalRef.current?.focus();
+    }
+  };
+
+  const handleCustomCmdSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customCmdInput.trim()) return;
+    sendQuickCommand(customCmdInput.trim());
+    setCustomCmdInput("");
+  };
+
+  const saveTabName = (id: string) => {
+    if (editingTabName.trim()) {
+      onRenameTab(id, editingTabName.trim());
+    }
+    setEditingTabId(null);
   };
 
   return (
-    <div className="terminal-page">
-      <div className="terminal-toolbar">
-        <div className="terminal-titlebar">
-          <div className={isSocketConnected ? "terminal-status-dot online" : "terminal-status-dot offline"} />
-          <div>
-            <div className="terminal-title">{t("activeTerminal")}: {shellId}</div>
-            <div className="terminal-meta">
-              {isSocketConnected ? t("wsConnected") : t("wsDisconnected")} - {t("terminalSize")} {terminalSize.cols}x{terminalSize.rows}
-            </div>
-          </div>
-          {isHeartbeating && (
-            <div className="terminal-heartbeat">
-              <span role="img" aria-label="heartbeat">HB</span> {lang === "zh" ? "心跳" : "Heartbeat"}
-            </div>
-          )}
+    <div className={`terminal-page ${isMaximized ? "is-maximized" : ""}`}>
+      {/* Toast Feedback */}
+      {toastMsg && (
+        <div className="terminal-toast">
+          {toastMsg}
         </div>
-        <div className="terminal-actions">
-          <button onClick={copyTerminalOutput} className="shadcn-btn shadcn-btn-outline terminal-action-btn" title={t("terminalCopyOutput")}>
-            {t("terminalCopyOutput")}
+      )}
+
+      {/* Unified Master Header */}
+      <div className="terminal-toolbar">
+        {/* Left: Terminal Tabs */}
+        <div className="terminal-tabs-left">
+          {shells.map((sh, idx) => {
+            const isActive = activeShellId === sh.id;
+            const displayName = tabNames[sh.id] || `${t("terminalShell")} #${idx + 1}`;
+            const isEditing = editingTabId === sh.id;
+
+            return (
+              <div
+                key={sh.id}
+                onClick={() => onSelectShell(sh.id)}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setEditingTabId(sh.id);
+                  setEditingTabName(tabNames[sh.id] || `${t("terminalShell")} #${idx + 1}`);
+                }}
+                className={`terminal-tab-pill ${isActive ? "is-active" : ""}`}
+                title={t("terminalRename")}
+              >
+                <span className={`terminal-tab-status ${sh.closed ? "closed" : "online"}`} />
+                {isEditing ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={editingTabName}
+                    onChange={(e) => setEditingTabName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveTabName(sh.id);
+                      if (e.key === "Escape") setEditingTabId(null);
+                    }}
+                    onBlur={() => saveTabName(sh.id)}
+                    className="terminal-tab-input"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <span className="terminal-tab-title">{displayName}</span>
+                )}
+                {shells.length > 1 && (
+                  <button
+                    className="terminal-tab-x"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseShell(sh.id);
+                    }}
+                    title={t("terminalCloseTab")}
+                  >
+                    <X size={11} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          <button
+            className="terminal-tab-new"
+            onClick={onNewShell}
+            title={t("terminalNewTab")}
+          >
+            <Plus size={13} />
           </button>
-          <button onClick={() => writeControl("\x03")} className="shadcn-btn shadcn-btn-outline terminal-action-btn" title="Ctrl+C">
-            Ctrl+C
+        </div>
+
+        {/* Right: Actions and Status */}
+        <div className="terminal-actions-right">
+          {/* Reconnect button if disconnected */}
+          {!isSocketConnected && (
+            <button
+              onClick={connectSocket}
+              className="terminal-reconnect-btn"
+              title={t("terminalReconnect")}
+            >
+              <RotateCcw size={12} />
+              <span>{t("terminalReconnect")}</span>
+            </button>
+          )}
+
+          {/* Size & Heartbeat Tag */}
+          <div className="terminal-badge-group">
+            <span className={`terminal-status-dot ${isSocketConnected ? "online" : "offline"}`} />
+            <span className="terminal-size-badge">
+              {terminalSize.cols}×{terminalSize.rows}
+            </span>
+            {isHeartbeating && (
+              <span className="terminal-heartbeat-badge" title={t("heartbeatTooltip")}>
+                HB
+              </span>
+            )}
+          </div>
+
+          {/* Quick Commands Toggle */}
+          <button
+            onClick={() => setShowQuickCmds(!showQuickCmds)}
+            className={`shadcn-btn shadcn-btn-outline terminal-action-btn ${showQuickCmds ? "is-active" : ""}`}
+            title={t("terminalQuickCmds")}
+          >
+            <Sparkles size={12} />
+            <span>{t("terminalQuickCmds")}</span>
           </button>
-          <button onClick={() => writeControl("\x04")} className="shadcn-btn shadcn-btn-outline terminal-action-btn" title="Ctrl+D">
-            Ctrl+D
-          </button>
-          <button onClick={() => setFontSize(size => Math.max(11, size - 1))} className="shadcn-btn shadcn-btn-outline terminal-icon-btn" title={t("terminalFontDown")}>
-            A-
-          </button>
-          <button onClick={() => setFontSize(size => Math.min(18, size + 1))} className="shadcn-btn shadcn-btn-outline terminal-icon-btn" title={t("terminalFontUp")}>
-            A+
-          </button>
+
+          {/* Key Control Buttons */}
+          <div className="terminal-btn-group">
+            <button
+              onClick={() => writeControl("\x03")}
+              className="shadcn-btn shadcn-btn-outline terminal-action-btn"
+              title="Ctrl+C (SIGINT)"
+            >
+              ^C
+            </button>
+            <button
+              onClick={() => writeControl("\x04")}
+              className="shadcn-btn shadcn-btn-outline terminal-action-btn"
+              title="Ctrl+D (EOF)"
+            >
+              ^D
+            </button>
+          </div>
+
+          {/* Font Stepper */}
+          <div className="terminal-font-stepper">
+            <button
+              onClick={() => setFontSize(size => Math.max(10, size - 1))}
+              className="terminal-font-btn"
+              title={t("terminalFontDown")}
+            >
+              A-
+            </button>
+            <span className="terminal-font-value">{fontSize}px</span>
+            <button
+              onClick={() => setFontSize(size => Math.min(20, size + 1))}
+              className="terminal-font-btn"
+              title={t("terminalFontUp")}
+            >
+              A+
+            </button>
+          </div>
+
+          {/* Auto Scroll Toggle */}
           <label className="terminal-toggle" title={t("terminalAutoScroll")}>
-            <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={autoScroll}
+              onChange={e => setAutoScroll(e.target.checked)}
+            />
             <span>{t("terminalAutoScroll")}</span>
           </label>
-          <button onClick={() => terminalRef.current?.clear()} className="shadcn-btn shadcn-btn-outline terminal-action-btn">
-            {t("clear")}
+
+          {/* Copy Button */}
+          <button
+            onClick={copyTerminalOutput}
+            className="shadcn-btn shadcn-btn-outline terminal-action-btn"
+            title={t("terminalCopyOutput")}
+            style={hasCopied ? { color: "#34d399", borderColor: "rgba(52, 211, 153, 0.4)" } : undefined}
+          >
+            {hasCopied ? <Check size={12} /> : <Copy size={12} />}
+            <span>{hasCopied ? (lang === "zh" ? "已复制" : "Copied") : t("terminalCopyOutput")}</span>
+          </button>
+
+          {/* Clear Button */}
+          <button
+            onClick={() => terminalRef.current?.clear()}
+            className="shadcn-btn shadcn-btn-outline terminal-action-btn"
+            title={t("clear")}
+          >
+            <Trash2 size={12} />
+            <span>{t("clear")}</span>
+          </button>
+
+          {/* Maximize / Fullscreen Button */}
+          <button
+            onClick={onToggleMaximize}
+            className={`shadcn-btn shadcn-btn-outline terminal-action-btn ${isMaximized ? "is-maximized" : ""}`}
+            title={isMaximized ? t("terminalExitFullscreen") : t("terminalFullscreen")}
+          >
+            {isMaximized ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
           </button>
         </div>
       </div>
 
+      {/* Collapsible Quick Commands Strip */}
+      {showQuickCmds && (
+        <div className="terminal-quick-cmds-bar">
+          <div className="terminal-quick-chips">
+            {QUICK_COMMANDS.map(item => (
+              <button
+                key={item.label}
+                onClick={() => sendQuickCommand(item.cmd)}
+                className="terminal-cmd-chip"
+                title={`Run: ${item.cmd}`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <form onSubmit={handleCustomCmdSubmit} className="terminal-cmd-form">
+            <input
+              type="text"
+              placeholder={lang === "zh" ? "输入命令并回车直接执行..." : "Type command and press Enter..."}
+              value={customCmdInput}
+              onChange={e => setCustomCmdInput(e.target.value)}
+              className="terminal-cmd-input"
+            />
+            <button type="submit" className="terminal-cmd-send" title="Send">
+              <CornerDownLeft size={12} />
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Terminal Viewport */}
       <div className="terminal-shell-frame">
         <div ref={containerRef} className="terminal-container" />
       </div>
-
-      <style>{`
-        @keyframes pulse {
-          0% { opacity: 0.4; transform: scale(0.95); }
-          50% { opacity: 1; transform: scale(1); }
-          100% { opacity: 0.4; transform: scale(0.95); }
-        }
-      `}</style>
     </div>
   );
 }

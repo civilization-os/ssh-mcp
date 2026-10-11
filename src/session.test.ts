@@ -4,6 +4,8 @@ import {
   listSessions,
   touchSession,
   getSession,
+  disconnectSession,
+  deleteSession,
 } from "./session.js";
 
 // ─── buildConnectConfig ──────────────────────────────────────────────────────
@@ -72,5 +74,14 @@ describe("session lifecycle", () => {
 
   it("getSession returns undefined for unknown session", () => {
     expect(getSession("nonexistent")).toBeUndefined();
+  });
+
+  it("disconnectSession returns false for unknown session", () => {
+    expect(disconnectSession("nonexistent")).toBe(false);
+  });
+
+  it("deleteSession returns false for unknown session", async () => {
+    const result = await deleteSession("nonexistent");
+    expect(result).toBe(false);
   });
 });

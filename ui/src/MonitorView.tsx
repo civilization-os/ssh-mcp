@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Search, Pause, Play, RefreshCw, X } from "lucide-react";
 import { translations } from "./i18n";
 import type { Language } from "./i18n";
 
@@ -42,6 +43,8 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [statsHistory, setStatsHistory] = useState<StatPoint[]>(createInitialStatsHistory);
+  const [isPaused, setIsPaused] = useState(false);
+  const [procFilter, setProcFilter] = useState("");
 
   const t = (key: keyof typeof translations["en"]): string => {
     return translations[lang][key] || translations["en"][key] || "";
@@ -64,7 +67,7 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
     try {
       const [sysRes, procRes] = await Promise.all([
         fetch(`${API_BASE}/api/sessions/${sessionId}/sysinfo`),
-        fetch(`${API_BASE}/api/sessions/${sessionId}/processes?limit=15`)
+        fetch(`${API_BASE}/api/sessions/${sessionId}/processes?limit=25`)
       ]);
       const [sysData, procData] = await Promise.all([sysRes.json(), procRes.json()]);
       if (sysData.content && sysData.content[0]) {
@@ -102,6 +105,7 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
   }, [sessionId]);
 
   const loadLiveStats = useCallback(async () => {
+    if (isPaused) return;
     try {
       const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/stats`);
       const data = await res.json();
@@ -118,7 +122,7 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
     } catch (e) {
       console.error("Failed to load live stats", e);
     }
-  }, [sessionId]);
+  }, [sessionId, isPaused]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => {
@@ -134,6 +138,12 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
       clearInterval(statsTimer);
     };
   }, [loadLiveStats, loadMonitorData]);
+
+  const filteredProcesses = processes.filter(p =>
+    procFilter.trim() === "" ||
+    p.command.toLowerCase().includes(procFilter.toLowerCase()) ||
+    String(p.pid).includes(procFilter)
+  );
 
   return (
     <div className="monitor-page">
@@ -167,7 +177,16 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
             <h3>{t("monitorRealtimeResources")}</h3>
             <p>{t("monitorLastSample")} {latestStats.time}</p>
           </div>
-          <div className="monitor-legend">
+          <div className="monitor-legend" style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <button
+              onClick={() => setIsPaused(!isPaused)}
+              className="shadcn-btn shadcn-btn-outline"
+              style={{ height: "26px", padding: "0 8px", fontSize: "11px", gap: "4px", background: "#131e29", color: "#cbd5e1", border: "1px solid #243342" }}
+              title={isPaused ? t("monitorResume") : t("monitorPause")}
+            >
+              {isPaused ? <Play size={11} style={{ color: "#2dd4bf" }} /> : <Pause size={11} />}
+              <span>{isPaused ? t("monitorResume") : t("monitorPause")}</span>
+            </button>
             <span><i className="monitor-dot monitor-dot-cpu" /> {t("monitorCpu")}</span>
             <span><i className="monitor-dot monitor-dot-mem" /> {t("monitorMemory")}</span>
           </div>
@@ -175,19 +194,20 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
         <div className="monitor-chart">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={statsHistory} margin={{ top: 12, right: 24, left: -12, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="4 8" stroke="hsl(var(--border))" vertical={false} />
-              <XAxis dataKey="time" stroke="hsl(var(--muted-foreground))" fontSize={11} tickMargin={10} axisLine={false} tickLine={false} />
-              <YAxis domain={[0, 100]} stroke="hsl(var(--muted-foreground))" fontSize={11} axisLine={false} tickLine={false} width={34} />
+              <CartesianGrid strokeDasharray="4 8" stroke="#1e293b" vertical={false} />
+              <XAxis dataKey="time" stroke="#94a3b8" fontSize={11} tickMargin={10} axisLine={false} tickLine={false} />
+              <YAxis domain={[0, 100]} stroke="#94a3b8" fontSize={11} axisLine={false} tickLine={false} width={34} />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: "hsl(var(--popover))",
-                  border: "1px solid hsl(var(--border))",
+                  backgroundColor: "#131e29",
+                  border: "1px solid #243342",
                   borderRadius: "8px",
-                  boxShadow: "0 18px 40px rgba(15, 23, 42, 0.12)"
+                  color: "#f8fafc",
+                  boxShadow: "0 18px 40px rgba(0, 0, 0, 0.4)"
                 }}
               />
-              <Line type="monotone" dataKey="cpu" stroke="#ef4444" strokeWidth={2.5} dot={false} isAnimationActive animationDuration={850} animationEasing="ease-out" name={`${t("monitorCpu")} %`} />
-              <Line type="monotone" dataKey="mem" stroke="#2563eb" strokeWidth={2.5} dot={false} isAnimationActive animationDuration={850} animationEasing="ease-out" name={`${t("monitorMemory")} %`} />
+              <Line type="monotone" dataKey="cpu" stroke="#38bdf8" strokeWidth={2.5} dot={false} isAnimationActive animationDuration={850} animationEasing="ease-out" name={`${t("monitorCpu")} %`} />
+              <Line type="monotone" dataKey="mem" stroke="#2dd4bf" strokeWidth={2.5} dot={false} isAnimationActive animationDuration={850} animationEasing="ease-out" name={`${t("monitorMemory")} %`} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -200,6 +220,14 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
               <h3>{t("sysLoad")}</h3>
               <p>{t("monitorSysSnapshot")}</p>
             </div>
+            <button
+              onClick={() => void loadMonitorData()}
+              className="shadcn-btn shadcn-btn-ghost"
+              style={{ width: "26px", height: "26px", padding: 0, color: "#94a3b8" }}
+              title={t("sftpRefresh")}
+            >
+              <RefreshCw size={12} className={loading ? "is-spinning" : ""} />
+            </button>
           </div>
           <div className="monitor-sysinfo">
             {loading && !sysinfo ? (
@@ -216,10 +244,29 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
         </section>
 
         <section className="monitor-panel">
-          <div className="monitor-card-header">
+          <div className="monitor-card-header" style={{ alignItems: "center" }}>
             <div>
               <h3>{t("processes")}</h3>
-              <p>{t("monitorProcessesHint")}</p>
+              <p>{t("monitorProcessesHint")} ({filteredProcesses.length})</p>
+            </div>
+            <div style={{ position: "relative", width: "190px" }}>
+              <Search size={12} style={{ position: "absolute", left: "8px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+              <input
+                type="text"
+                value={procFilter}
+                onChange={e => setProcFilter(e.target.value)}
+                placeholder={t("monitorFilterPlaceholder")}
+                className="shadcn-input"
+                style={{ width: "100%", height: "28px", paddingLeft: "26px", paddingRight: procFilter ? "24px" : "8px", fontSize: "11px", background: "#131e29", color: "#f8fafc", border: "1px solid #243342" }}
+              />
+              {procFilter && (
+                <button
+                  onClick={() => setProcFilter("")}
+                  style={{ position: "absolute", right: "6px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}
+                >
+                  <X size={11} />
+                </button>
+              )}
             </div>
           </div>
           <div className="monitor-table-wrap">
@@ -233,7 +280,7 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
                 </tr>
               </thead>
               <tbody>
-                {processes.map((proc, idx) => (
+                {filteredProcesses.map((proc, idx) => (
                   <tr key={idx}>
                     <td>{proc.pid}</td>
                     <td><span className="monitor-cpu">{proc.cpu}%</span></td>

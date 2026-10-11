@@ -211,7 +211,7 @@ ui/src/                  # React Desktop renderer
 
 ## Releases
 
-A tag such as `v2.5.4` must match the version in `package.json`. The Desktop Release workflow validates the version, runs type checks and tests, builds the Windows NSIS installer, and publishes the installer, block map, and `latest.yml` required by the in-app updater.
+A tag such as `v2.5.5` must match the version in `package.json`. The Desktop Release workflow validates the version, runs type checks and tests, builds the Windows NSIS installer, and publishes the installer, block map, and `latest.yml` required by the in-app updater.
 
 ## License
 

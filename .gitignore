@@ -10,3 +10,4 @@ coverage/
 .reasonix/
 desktop-dist/
 release/
+release-qa/

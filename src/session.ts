@@ -541,13 +541,51 @@ export function disconnectSession(sessionId: string): boolean {
   const session = sessions.get(sessionId);
   if (!session) return false;
 
+  // Clean up shells for this session
+  import("./handlers/shell.js").then(({ closeShellsForSession }) => {
+    try { closeShellsForSession(sessionId); } catch {}
+  }).catch(() => {});
+
   if (session.type === "ssh" && session.client) {
-    try { session.client.end(); } catch {}
+    try {
+      session.client.removeAllListeners();
+      session.client.end();
+    } catch {}
     session.client = undefined;
   }
 
   // Keep the entry in metadata so it survives restart (allows reconnect)
   saveSessionMeta();
+  return true;
+}
+
+export async function deleteSession(sessionId: string): Promise<boolean> {
+  const session = sessions.get(sessionId);
+  if (!session) return false;
+
+  // 1. Clean up and close all shells associated with this session
+  try {
+    const { closeShellsForSession } = await import("./handlers/shell.js");
+    closeShellsForSession(sessionId);
+  } catch (e) {
+    console.error(`[session] Failed to close shells for session ${sessionId}:`, e);
+  }
+
+  // 2. Disconnect active SSH client and remove all event listeners
+  if (session.type === "ssh" && session.client) {
+    try {
+      session.client.removeAllListeners();
+      session.client.end();
+    } catch {}
+    session.client = undefined;
+  }
+
+  // 3. Remove session from in-memory Map
+  sessions.delete(sessionId);
+
+  // 4. Save metadata to remove the session from disk (sessions-meta.json) and emit sessions_changed
+  saveSessionMeta();
+
   return true;
 }
 

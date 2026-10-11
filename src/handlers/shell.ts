@@ -142,20 +142,7 @@ async function waitForQuiet(shell: ShellSession, quietMs: number, maxWaitMs?: nu
 
 // Clean up all shells belonging to a session (called on SSH disconnect)
 export function cleanShellsBySession(sessionId: string) {
-  for (const [id, shell] of shells) {
-    if (shell.sessionId === sessionId) {
-      if (shell.heartbeatTimer) {
-        clearInterval(shell.heartbeatTimer);
-      }
-      if (!shell.closed) {
-        try { shell.channel.close(); } catch { /* ignore */ }
-      }
-      disposeTerminalWhenFlushed(shell);
-      shells.delete(id);
-      shellEvents.emit("close", id);
-    }
-  }
-  globalEvents.emit("shells_changed");
+  closeShellsForSession(sessionId);
 }
 
 // --- WebSocket Support Helpers ---
@@ -580,6 +567,30 @@ export async function handleShellList() {
     return `  ${s.id}  session: ${s.sessionId}  ${s.closed ? "CLOSED" : "OPEN"}  (${age}s ago)`;
   });
   return { content: [{ type: "text" as const, text: `Interactive shells:\n${lines.join("\n")}` }] };
+}
+
+export function closeShellsForSession(sessionId: string): void {
+  for (const [shellId, shell] of shells) {
+    if (shell.sessionId === sessionId) {
+      if (shell.heartbeatTimer) clearInterval(shell.heartbeatTimer);
+      if (shell.wsClients) {
+        for (const ws of shell.wsClients) {
+          try {
+            ws.send("\r\n[Session deleted by user]\r\n");
+            ws.close(1000, "Session deleted");
+          } catch {}
+        }
+        shell.wsClients.clear();
+      }
+      if (!shell.closed) {
+        try { shell.channel.close(); } catch {}
+      }
+      disposeTerminalWhenFlushed(shell);
+      shellEvents.emit("close", shellId);
+      shells.delete(shellId);
+    }
+  }
+  globalEvents.emit("shells_changed");
 }
 
 export function closeAllShells(): void {
