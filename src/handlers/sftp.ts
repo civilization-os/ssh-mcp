@@ -1,6 +1,6 @@
 import { Client } from "ssh2";
 import { createReadStream, createWriteStream } from "node:fs";
-import { link, mkdir, rename, rm, stat } from "node:fs/promises";
+import { copyFile, link, mkdir, rename, rm, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -53,12 +53,34 @@ function withSftp<T>(client: Client, timeoutMs: number, fn: (sftp: import("ssh2"
 
 export async function handleReadFile(args: SshFileReadArgs) {
   const content = await resolveClient(args, (client) =>
-    withSftp(client, args.timeout ?? 30000, (sftp) => {
+    withSftp(client, args.timeout ?? 30000, async (sftp) => {
+      let start: number | undefined = args.offset;
+      let end: number | undefined = args.length !== undefined && start !== undefined
+        ? start + args.length - 1
+        : undefined;
+
+      if (args.tail !== undefined && args.tail > 0 && typeof sftp.stat === "function") {
+        const fileStat = await new Promise<import("ssh2").Stats | null>((resolve) => {
+          sftp.stat(args.path, (err, st) => resolve(err ? null : st));
+        });
+        if (fileStat && fileStat.size > args.tail) {
+          start = fileStat.size - args.tail;
+          end = undefined;
+        }
+      }
+
+      const streamOptions: { start?: number; end?: number } = {};
+      if (start !== undefined) streamOptions.start = start;
+      if (end !== undefined) streamOptions.end = end;
+
       return new Promise<string>((resolve, reject) => {
         const chunks: Buffer[] = [];
-        const stream = sftp.createReadStream(args.path);
+        const stream = sftp.createReadStream(args.path, streamOptions);
         stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-        stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+        stream.on("end", () => {
+          const buf = Buffer.concat(chunks);
+          resolve(args.encoding === "base64" ? buf.toString("base64") : buf.toString("utf-8"));
+        });
         stream.on("error", reject);
       });
     })
@@ -70,6 +92,10 @@ export async function handleReadFile(args: SshFileReadArgs) {
 // --- Write ---
 
 export async function handleWriteFile(args: SshFileWriteArgs) {
+  const buf = args.encoding === "base64"
+    ? Buffer.from(args.content, "base64")
+    : Buffer.from(args.content, "utf-8");
+
   await resolveClient(args, (client) =>
     withSftp(client, args.timeout ?? 30000, async (sftp) => {
       if (args.mkdir) {
@@ -81,10 +107,12 @@ export async function handleWriteFile(args: SshFileWriteArgs) {
         }
       }
       return new Promise<void>((resolve, reject) => {
-        const stream = sftp.createWriteStream(args.path);
+        const stream = sftp.createWriteStream(args.path, {
+          flags: args.append ? "a" : "w",
+        });
         stream.on("close", () => resolve());
         stream.on("error", reject);
-        stream.end(args.content, "utf-8");
+        stream.end(buf);
       });
     })
   );
@@ -94,7 +122,7 @@ export async function handleWriteFile(args: SshFileWriteArgs) {
   return {
     content: [{
       type: "text" as const,
-      text: `Wrote ${args.content.length} bytes to ${args.path}`,
+      text: `Wrote ${buf.length} bytes to ${args.path}${args.append ? " (appended)" : ""}`,
     }],
   };
 }
@@ -111,21 +139,34 @@ export async function handleUploadFile(args: SshFileUploadArgs) {
     throw new Error(`Local path is not a file: ${args.localPath}`);
   }
 
+  let finalRemotePath = args.path;
   await resolveClient(args, client =>
     withSftp(client, args.timeout ?? 300000, async sftp => {
+      // Auto-append source filename if remote path ends with / or is an existing directory
+      if (finalRemotePath.endsWith("/")) {
+        finalRemotePath = path.posix.join(finalRemotePath, path.basename(args.localPath));
+      } else if (typeof sftp.stat === "function") {
+        const remoteStat = await new Promise<import("ssh2").Stats | null>(resolve => {
+          sftp.stat(finalRemotePath, (err, stats) => resolve(err ? null : stats));
+        });
+        if (remoteStat && remoteStat.isDirectory()) {
+          finalRemotePath = path.posix.join(finalRemotePath, path.basename(args.localPath));
+        }
+      }
+
       if (args.mkdir) {
-        const dir = args.path.substring(0, args.path.lastIndexOf("/"));
+        const dir = finalRemotePath.substring(0, finalRemotePath.lastIndexOf("/"));
         if (dir) await sftpMkdir(sftp, dir, true);
       }
 
-      const temporaryPath = `${args.path}.ssh-mcp-upload-${randomBytes(8).toString("hex")}.tmp`;
+      const temporaryPath = `${finalRemotePath}.ssh-mcp-upload-${randomBytes(8).toString("hex")}.tmp`;
       try {
         await pipeline(
           createReadStream(args.localPath),
           sftp.createWriteStream(temporaryPath),
         );
         await new Promise<void>((resolve, reject) => {
-          sftp.rename(temporaryPath, args.path, error => error ? reject(error) : resolve());
+          sftp.rename(temporaryPath, finalRemotePath, error => error ? reject(error) : resolve());
         });
       } catch (error) {
         await new Promise<void>(resolve => {
@@ -136,11 +177,11 @@ export async function handleUploadFile(args: SshFileUploadArgs) {
     })
   );
 
-  globalEvents.emit("sftp_changed", { sessionId: args.sessionId, path: args.path });
+  globalEvents.emit("sftp_changed", { sessionId: args.sessionId, path: finalRemotePath });
   return {
     content: [{
       type: "text" as const,
-      text: `Uploaded ${localStat.size} bytes from ${args.localPath} to ${args.path}`,
+      text: `Uploaded ${localStat.size} bytes from ${args.localPath} to ${finalRemotePath}`,
     }],
   };
 }
@@ -156,65 +197,83 @@ async function localStat(filePath: string) {
   }
 }
 
-async function installDownloadedFile(temporaryPath: string, destinationPath: string, overwrite: boolean) {
+async function safeMoveFile(source: string, destination: string) {
   try {
-    await link(temporaryPath, destinationPath);
-    await rm(temporaryPath);
-    return;
+    await rename(source, destination);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "EXDEV" || code === "EPERM") {
+      await copyFile(source, destination);
+      await rm(source, { force: true }).catch(() => {});
+    } else {
+      throw error;
+    }
+  }
+}
+
+async function installDownloadedFile(temporaryPath: string, destinationPath: string, overwrite: boolean) {
+  const destinationStat = await localStat(destinationPath);
+  if (destinationStat) {
+    if (!destinationStat.isFile()) {
+      throw new Error(`Local destination is not a file: ${destinationPath}`);
+    }
     if (!overwrite) {
       throw new Error(`Local destination already exists: ${destinationPath}. Pass overwrite=true to replace it.`);
     }
-  }
 
-  const destinationStat = await localStat(destinationPath);
-  if (!destinationStat) {
-    return installDownloadedFile(temporaryPath, destinationPath, overwrite);
-  }
-  if (!destinationStat.isFile()) {
-    throw new Error(`Local destination is not a file: ${destinationPath}`);
-  }
-
-  const backupPath = `${destinationPath}.ssh-mcp-backup-${randomBytes(8).toString("hex")}.tmp`;
-  await rename(destinationPath, backupPath);
-  try {
-    await rename(temporaryPath, destinationPath);
-  } catch (error) {
+    const backupPath = `${destinationPath}.ssh-mcp-backup-${randomBytes(8).toString("hex")}.tmp`;
+    await safeMoveFile(destinationPath, backupPath);
     try {
-      await rename(backupPath, destinationPath);
-    } catch (restoreError) {
-      throw new AggregateError(
-        [error, restoreError],
-        `Failed to install the downloaded file and restore the original destination: ${destinationPath}`,
-      );
+      await safeMoveFile(temporaryPath, destinationPath);
+    } catch (error) {
+      try {
+        await safeMoveFile(backupPath, destinationPath);
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          `Failed to install the downloaded file and restore the original destination: ${destinationPath}`,
+        );
+      }
+      throw error;
     }
-    throw error;
+    await rm(backupPath, { force: true }).catch(() => {});
+  } else {
+    await safeMoveFile(temporaryPath, destinationPath);
   }
-  await rm(backupPath, { force: true }).catch(() => {});
 }
 
 export async function handleDownloadFile(args: SshFileDownloadArgs) {
-  if (!path.isAbsolute(args.localPath)) {
+  let targetLocalPath = args.localPath;
+  if (!path.isAbsolute(targetLocalPath)) {
     throw new Error("localPath must be an absolute path on the Desktop computer");
   }
 
-  const parentDirectory = path.dirname(args.localPath);
+  // Auto-append remote filename if local destination ends with slash or is a directory
+  if (targetLocalPath.endsWith("/") || targetLocalPath.endsWith("\\")) {
+    targetLocalPath = path.join(targetLocalPath, path.posix.basename(args.path));
+  } else {
+    const existing = await localStat(targetLocalPath);
+    if (existing && existing.isDirectory()) {
+      targetLocalPath = path.join(targetLocalPath, path.posix.basename(args.path));
+    }
+  }
+
+  const parentDirectory = path.dirname(targetLocalPath);
   if (args.mkdir) {
     await mkdir(parentDirectory, { recursive: true });
   }
 
-  const existingDestination = await localStat(args.localPath);
+  const existingDestination = await localStat(targetLocalPath);
   if (existingDestination && !existingDestination.isFile()) {
-    throw new Error(`Local destination is not a file: ${args.localPath}`);
+    throw new Error(`Local destination is not a file: ${targetLocalPath}`);
   }
   if (existingDestination && !args.overwrite) {
-    throw new Error(`Local destination already exists: ${args.localPath}. Pass overwrite=true to replace it.`);
+    throw new Error(`Local destination already exists: ${targetLocalPath}. Pass overwrite=true to replace it.`);
   }
 
   const temporaryPath = path.join(
     parentDirectory,
-    `.${path.basename(args.localPath)}.ssh-mcp-download-${randomBytes(8).toString("hex")}.tmp`,
+    `.${path.basename(targetLocalPath)}.ssh-mcp-download-${randomBytes(8).toString("hex")}.tmp`,
   );
 
   try {
@@ -242,11 +301,11 @@ export async function handleDownloadFile(args: SshFileDownloadArgs) {
       })
     ) as number;
 
-    await installDownloadedFile(temporaryPath, args.localPath, args.overwrite ?? false);
+    await installDownloadedFile(temporaryPath, targetLocalPath, args.overwrite ?? false);
     return {
       content: [{
         type: "text" as const,
-        text: `Downloaded ${downloadedBytes} bytes from ${args.path} to ${args.localPath}`,
+        text: `Downloaded ${downloadedBytes} bytes from ${args.path} to ${targetLocalPath}`,
       }],
     };
   } catch (error) {

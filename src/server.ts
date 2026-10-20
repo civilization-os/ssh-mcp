@@ -529,27 +529,68 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
     if (sftpDownloadMatch && req.method === "GET") {
       const sessionId = sftpDownloadMatch[1];
       const filePath = url.searchParams.get("path") || "";
-      const fileName = filePath.split("/").pop() || "download";
+      const fileName = path.posix.basename(filePath) || "download";
+      if (!filePath) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ isError: true, error: "Path is required" }));
+        return;
+      }
+
       try {
-        const { handleReadFile } = await import("./handlers/sftp.js");
-        const result = await handleReadFile({ sessionId, path: filePath }) as any;
-        if (result.isError) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-          return;
-        }
-        const content = result.content[0].type === "text"
-          ? Buffer.from(result.content[0].text, "utf-8")
-          : Buffer.from((result.content[0] as any).data, "base64");
-        res.writeHead(200, {
-          "Content-Type": "application/octet-stream",
-          "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
-          "Content-Length": content.length
+        await resolveClient({ sessionId }, async client => {
+          return new Promise<void>((resolve, reject) => {
+            client.sftp((err, sftp) => {
+              if (err) return reject(err);
+
+              sftp.stat(filePath, (statErr, stats) => {
+                if (statErr) {
+                  try { sftp.end(); } catch {}
+                  return reject(statErr);
+                }
+                if (stats.isDirectory()) {
+                  try { sftp.end(); } catch {}
+                  return reject(new Error("Cannot download a directory directly"));
+                }
+
+                res.writeHead(200, {
+                  "Content-Type": "application/octet-stream",
+                  "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+                  "Content-Length": stats.size,
+                });
+
+                const readStream = sftp.createReadStream(filePath);
+
+                readStream.on("error", (streamErr: any) => {
+                  try { sftp.end(); } catch {}
+                  if (!res.headersSent) {
+                    res.writeHead(500, { "Content-Type": "application/json" });
+                    res.end(JSON.stringify({ isError: true, error: streamErr.message }));
+                  } else {
+                    res.destroy(streamErr);
+                  }
+                  reject(streamErr);
+                });
+
+                req.on("close", () => {
+                  readStream.destroy();
+                  try { sftp.end(); } catch {}
+                });
+
+                readStream.on("end", () => {
+                  try { sftp.end(); } catch {}
+                  resolve();
+                });
+
+                readStream.pipe(res);
+              });
+            });
+          });
         });
-        res.end(content);
       } catch (err: any) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ isError: true, error: err.message }));
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ isError: true, error: err.message || "Download failed" }));
+        }
       }
       return;
     }
@@ -558,8 +599,8 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
     const sftpUploadMatch = url.pathname.match(/^\/api\/sessions\/([^\/]+)\/sftp\/upload$/);
     if (sftpUploadMatch && req.method === "POST") {
       const sessionId = sftpUploadMatch[1];
-      const uploadPath = url.searchParams.get("path")?.trim() ?? "";
-      if (!uploadPath) {
+      const targetQueryPath = url.searchParams.get("path")?.trim() ?? "";
+      if (!targetQueryPath) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ isError: true, error: "Remote upload path is required" }));
         return;
@@ -570,20 +611,35 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
           const sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
             client.sftp((error, channel) => error ? reject(error) : resolve(channel));
           });
-          const temporaryPath = `${uploadPath}.ssh-mcp-upload-${randomBytes(8).toString("hex")}.tmp`;
+
           let writeStarted = false;
+          let temporaryPath = "";
+          let finalUploadPath = targetQueryPath;
 
           try {
-            const result = await streamMultipartFile(req, req.headers, () => {
+            const result = await streamMultipartFile(req, req.headers, (info) => {
+              const originalFilename = info.filename || "upload.bin";
+              if (targetQueryPath.endsWith("/")) {
+                finalUploadPath = path.posix.join(targetQueryPath, originalFilename);
+              } else {
+                finalUploadPath = targetQueryPath;
+              }
+
+              temporaryPath = `${finalUploadPath}.ssh-mcp-upload-${randomBytes(8).toString("hex")}.tmp`;
               writeStarted = true;
               return sftp.createWriteStream(temporaryPath);
             });
+
             await new Promise<void>((resolve, reject) => {
-              sftp.rename(temporaryPath, uploadPath, error => error ? reject(error) : resolve());
+              sftp.rename(temporaryPath, finalUploadPath, error => error ? reject(error) : resolve());
             });
-            return result;
+
+            return {
+              ...result,
+              destinationPath: finalUploadPath,
+            };
           } catch (error) {
-            if (writeStarted) {
+            if (writeStarted && temporaryPath) {
               await new Promise<void>(resolve => {
                 sftp.unlink(temporaryPath, () => resolve());
               });
@@ -592,14 +648,14 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
           } finally {
             try { sftp.end(); } catch {}
           }
-        }) as { bytesWritten: number; filename: string; mimeType: string };
+        }) as { bytesWritten: number; filename: string; mimeType: string; destinationPath: string };
 
-        globalEvents.emit("sftp_changed", { sessionId, path: uploadPath });
+        globalEvents.emit("sftp_changed", { sessionId, path: upload.destinationPath });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
-          content: [{ type: "text", text: `Uploaded ${upload.bytesWritten} bytes to ${uploadPath}` }],
+          content: [{ type: "text", text: `Uploaded ${upload.bytesWritten} bytes to ${upload.destinationPath}` }],
           bytesWritten: upload.bytesWritten,
-          path: uploadPath,
+          path: upload.destinationPath,
         }));
       } catch (error) {
         const statusCode = error instanceof MultipartUploadError ? error.statusCode : 500;

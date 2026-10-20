@@ -174,42 +174,50 @@ const TOOL_CATALOG = [
     },
     {
       name: "ssh_file_read",
-      description: "Read the contents of a file on a remote server via SFTP.",
+      description: "Read the contents of a file on a remote server via SFTP. Supports UTF-8 text and base64 for binary files, as well as range reading (offset, length, tail) for large files.",
       inputSchema: {
         type: "object",
         properties: {
           sessionId: { type: "string", description: "Session ID from ssh_connect" },
           ...authFields,
           path: { type: "string", description: "Absolute path to the remote file" },
+          encoding: { type: "string", enum: ["utf-8", "base64"], description: "Encoding to return (default: utf-8). Use base64 for binary files or images.", default: "utf-8" },
+          offset: { type: "number", description: "Starting byte offset to read from" },
+          length: { type: "number", description: "Maximum number of bytes to read" },
+          tail: { type: "number", description: "Read the last N bytes of the file (ideal for log files)" },
+          timeout: { type: "number", description: "Operation timeout in milliseconds (default: 30000)" },
         },
         required: ["path"],
       },
     },
     {
       name: "ssh_file_write",
-      description: "Write content to a file on a remote server via SFTP.",
+      description: "Write content to a file on a remote server via SFTP. Supports writing UTF-8 text, base64 binary content, and appending to existing files.",
       inputSchema: {
         type: "object",
         properties: {
           sessionId: { type: "string", description: "Session ID from ssh_connect" },
           ...authFields,
           path: { type: "string", description: "Absolute path to the remote file" },
-          content: { type: "string", description: "Content to write" },
+          content: { type: "string", description: "Content to write (text string, or base64 encoded string if encoding=base64)" },
+          encoding: { type: "string", enum: ["utf-8", "base64"], description: "Encoding of the content (default: utf-8). Use base64 to write binary files.", default: "utf-8" },
+          append: { type: "boolean", description: "If true, append to the file instead of overwriting", default: false },
           mkdir: { type: "boolean", description: "Create parent directories if they don't exist", default: false },
+          timeout: { type: "number", description: "Operation timeout in milliseconds (default: 30000)" },
         },
         required: ["path", "content"],
       },
     },
     {
       name: "ssh_file_upload",
-      description: "Stream a local file from the computer running SSH-MCP Desktop to a remote server via SFTP. Supports binary and large files without loading the complete file into memory.",
+      description: "Stream a local file from the computer running SSH-MCP Desktop to a remote server via SFTP. The destination 'path' can be a full remote file path or an existing directory path (ending with / or existing directory, where source filename is automatically preserved). Supports binary and large files without loading the complete file into memory.",
       inputSchema: {
         type: "object",
         properties: {
           sessionId: { type: "string", description: "Session ID from ssh_connect" },
           ...authFields,
           localPath: { type: "string", description: "Absolute path to the source file on the SSH-MCP Desktop computer" },
-          path: { type: "string", description: "Absolute destination path on the remote server" },
+          path: { type: "string", description: "Absolute destination path or destination directory on the remote server" },
           mkdir: { type: "boolean", description: "Create remote parent directories if they do not exist", default: false },
           timeout: { type: "number", description: "Upload timeout in milliseconds (default: 300000)", default: 300000 },
         },
@@ -218,14 +226,14 @@ const TOOL_CATALOG = [
     },
     {
       name: "ssh_file_download",
-      description: "Stream a remote file via SFTP to an absolute local path on the computer running SSH-MCP Desktop. The transfer uses a temporary local file and refuses to overwrite an existing file unless overwrite=true.",
+      description: "Stream a remote file via SFTP to an absolute local path on the computer running SSH-MCP Desktop. 'localPath' can be a full destination file path or an existing local directory (ending with / or existing directory, where remote filename is automatically preserved). The transfer uses a temporary local file and refuses to overwrite an existing file unless overwrite=true.",
       inputSchema: {
         type: "object",
         properties: {
           sessionId: { type: "string", description: "Session ID from ssh_connect" },
           ...authFields,
           path: { type: "string", description: "Absolute path to the source file on the remote server" },
-          localPath: { type: "string", description: "Absolute destination path on the SSH-MCP Desktop computer" },
+          localPath: { type: "string", description: "Absolute destination path or destination directory on the SSH-MCP Desktop computer" },
           mkdir: { type: "boolean", description: "Create local parent directories if they do not exist", default: false },
           overwrite: { type: "boolean", description: "Replace an existing local file (default: false)", default: false },
           timeout: { type: "number", description: "Download timeout in milliseconds (default: 300000)", default: 300000 },

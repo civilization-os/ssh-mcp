@@ -19,6 +19,29 @@ describe("handleReadFile", () => {
     const { handleReadFile } = await import("./sftp.js");
     await expect(handleReadFile({ path: "/etc/hosts" })).rejects.toThrow("sftp failed");
   });
+
+  it("supports base64 encoding and range reading", async () => {
+    const raw = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+    const createReadStream = vi.fn((_path: string, options?: any) => {
+      expect(options).toEqual({ start: 1, end: 2 });
+      return Readable.from([raw.subarray(1, 3)]);
+    });
+
+    vi.doMock("../session.js", () => ({
+      resolveClient: vi.fn((_a: any, fn: (c: any) => Promise<any>) => fn({
+        sftp: vi.fn((cb: Function) => cb(null, makeSftp({ createReadStream }))),
+      })),
+    }));
+
+    const { handleReadFile } = await import("./sftp.js");
+    const result = await handleReadFile({
+      path: "/data/bin",
+      encoding: "base64",
+      offset: 1,
+      length: 2,
+    });
+    expect(result.content[0].text).toBe(raw.subarray(1, 3).toString("base64"));
+  });
 });
 
 describe("handleWriteFile", () => {
@@ -33,6 +56,39 @@ describe("handleWriteFile", () => {
     }));
     const { handleWriteFile } = await import("./sftp.js");
     await expect(handleWriteFile({ path: "/tmp/test", content: "hello" })).rejects.toThrow("sftp write failed");
+  });
+
+  it("supports base64 encoding and append mode", async () => {
+    const written: Buffer[] = [];
+    let writeOptions: any;
+    const createWriteStream = vi.fn((_path: string, options?: any) => {
+      writeOptions = options;
+      return new Writable({
+        write(chunk, _enc, cb) {
+          written.push(Buffer.from(chunk));
+          cb();
+        },
+      });
+    });
+
+    vi.doMock("../session.js", () => ({
+      resolveClient: vi.fn((_a: any, fn: (c: any) => Promise<any>) => fn({
+        sftp: vi.fn((cb: Function) => cb(null, makeSftp({ createWriteStream }))),
+      })),
+    }));
+
+    const { handleWriteFile } = await import("./sftp.js");
+    const b64 = Buffer.from("appended content").toString("base64");
+    const result = await handleWriteFile({
+      path: "/var/log/app.log",
+      content: b64,
+      encoding: "base64",
+      append: true,
+    });
+
+    expect(writeOptions).toEqual({ flags: "a" });
+    expect(Buffer.concat(written).toString("utf-8")).toBe("appended content");
+    expect(result.content[0].text).toContain("appended");
   });
 });
 

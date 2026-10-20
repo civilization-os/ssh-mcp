@@ -24,7 +24,7 @@ export interface MultipartUploadResult {
 export function streamMultipartFile(
   source: Readable,
   headers: IncomingHttpHeaders,
-  createDestination: () => Writable,
+  createDestination: (info: { filename: string; mimeType: string }) => Writable,
   maxFileSize = MAX_UPLOAD_SIZE,
 ): Promise<MultipartUploadResult> {
   let parser: ReturnType<typeof Busboy>;
@@ -106,7 +106,7 @@ export function streamMultipartFile(
 
       let destination: Writable;
       try {
-        destination = createDestination();
+        destination = createDestination({ filename, mimeType });
         destinationStream = destination;
       } catch (error) {
         file.resume();

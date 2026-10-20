@@ -20,7 +20,14 @@ import {
   Trash2,
   Download,
   ExternalLink,
-  X
+  X,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
+  CheckSquare,
+  Square
 } from "lucide-react";
 
 const API_BASE = "";
@@ -43,11 +50,24 @@ interface SftpViewProps {
   lang: Language;
 }
 
+interface TransferItem {
+  id: string;
+  name: string;
+  size: number;
+  loaded: number;
+  percent: number;
+  speed: string;
+  status: "uploading" | "done" | "error" | "aborted";
+  error?: string;
+  xhr?: XMLHttpRequest;
+}
+
 export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOpenFile?: (path: string) => void }) {
   const [path, setPath] = useState("/");
   const [files, setFiles] = useState<SftpFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<SftpFile | null>(null);
+  const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<{ msg: string; type: "success" | "error" | "" }>({
     msg: "",
     type: ""
@@ -61,6 +81,12 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
   const [pathInputValue, setPathInputValue] = useState("");
   const [copiedPath, setCopiedPath] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  // Transfer queue & state
+  const [transfers, setTransfers] = useState<TransferItem[]>([]);
+  const [isTransfersExpanded, setIsTransfersExpanded] = useState(true);
+  const [conflictFiles, setConflictFiles] = useState<{ existing: string[]; pending: globalThis.File[] } | null>(null);
+
   const uploadRef = useRef<HTMLInputElement>(null);
 
   const t = (key: keyof typeof translations["en"]): string =>
@@ -78,6 +104,7 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
   const loadFiles = useCallback(async (targetPath: string) => {
     setLoading(true);
     setSelectedFile(null);
+    setSelectedNames(new Set());
     try {
       const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/list?path=${encodeURIComponent(targetPath)}`);
       const data = await res.json();
@@ -118,6 +145,27 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
     setSelectedFile(prev => prev?.name === file.name ? null : file);
   };
 
+  const handleToggleSelect = (fileName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedNames(prev => {
+      const next = new Set(prev);
+      if (next.has(fileName)) {
+        next.delete(fileName);
+      } else {
+        next.add(fileName);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedNames.size === filteredFiles.length) {
+      setSelectedNames(new Set());
+    } else {
+      setSelectedNames(new Set(filteredFiles.map(f => f.name)));
+    }
+  };
+
   const handleBack = () => {
     if (path === "/") return;
     const parentPath = path.substring(0, path.lastIndexOf("/")) || "/";
@@ -144,6 +192,41 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
     } catch (error: unknown) {
       showStatus(`✗ ${errorMessage(error)}`, "error");
     }
+  };
+
+  // Batch delete
+  const handleBatchDelete = async () => {
+    const count = selectedNames.size;
+    if (count === 0) return;
+    const confirmMsg = t("sftpConfirmBatchDelete").replace("{count}", String(count));
+    if (!confirm(confirmMsg)) return;
+
+    setLoading(true);
+    let deletedCount = 0;
+    for (const name of selectedNames) {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/sessions/${sessionId}/sftp/delete?path=${encodeURIComponent(getFilePath(name))}`,
+          { method: "DELETE" }
+        );
+        const data = await res.json();
+        if (!data.isError) deletedCount++;
+      } catch {}
+    }
+    showStatus(`✓ ${t("sftpDeletedOk")} (${deletedCount}/${count})`, "success");
+    loadFiles(path);
+  };
+
+  // Batch download
+  const handleBatchDownload = () => {
+    const downloadables = files.filter(f => selectedNames.has(f.name) && f.type === "file");
+    if (downloadables.length === 0) return;
+    showStatus(`✓ ${t("sftpDownloadStarted")}: ${downloadables.length} 项`, "success");
+    downloadables.forEach((file, idx) => {
+      setTimeout(() => {
+        handleDownload(file);
+      }, idx * 250);
+    });
   };
 
   // Rename
@@ -187,79 +270,171 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
     }
   };
 
-  // Download file
-  const handleDownload = async (file: SftpFile) => {
+  // Native streaming download (Zero RAM buffering, browser manages native download stream)
+  const handleDownload = (file: SftpFile) => {
     if (file.type !== "file") return;
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/sessions/${sessionId}/sftp/download?path=${encodeURIComponent(getFilePath(file.name))}`
-      );
-      if (!res.ok) throw new Error("Download failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = file.name;
-      a.click();
-      URL.revokeObjectURL(url);
-      showStatus(`✓ ${t("sftpDownloadOk")}: ${file.name}`, "success");
-    } catch (error: unknown) {
-      showStatus(`✗ ${errorMessage(error)}`, "error");
-    }
+    const downloadUrl = `${API_BASE}/api/sessions/${sessionId}/sftp/download?path=${encodeURIComponent(getFilePath(file.name))}`;
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showStatus(`✓ ${t("sftpDownloadStarted")}: ${file.name}`, "success");
   };
 
-  const uploadFileBlob = async (file: globalThis.File) => {
-    const remotePath = getFilePath(file.name);
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/sftp/upload?path=${encodeURIComponent(remotePath)}`, {
-      method: "POST",
-      body: formData
+  // Progress-tracked Upload via XHR
+  const uploadWithProgress = (file: globalThis.File): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const remotePath = getFilePath(file.name);
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const xhr = new XMLHttpRequest();
+
+      const newTransfer: TransferItem = {
+        id,
+        name: file.name,
+        size: file.size,
+        loaded: 0,
+        percent: 0,
+        speed: "",
+        status: "uploading",
+        xhr
+      };
+
+      setTransfers(prev => [newTransfer, ...prev]);
+
+      let lastTime = Date.now();
+      let lastLoaded = 0;
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const now = Date.now();
+          const elapsed = (now - lastTime) / 1000;
+          let speedStr = "";
+          if (elapsed >= 0.25) {
+            const bytesPerSec = (e.loaded - lastLoaded) / elapsed;
+            speedStr = `${formatBytes(bytesPerSec)}/s`;
+            lastTime = now;
+            lastLoaded = e.loaded;
+          }
+          const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
+          setTransfers(prev => prev.map(item => item.id === id ? {
+            ...item,
+            loaded: e.loaded,
+            percent,
+            speed: speedStr || item.speed
+          } : item));
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          setTransfers(prev => prev.map(item => item.id === id ? {
+            ...item,
+            loaded: file.size,
+            percent: 100,
+            status: "done",
+            speed: ""
+          } : item));
+          resolve();
+        } else {
+          let errText = "Upload failed";
+          try {
+            const parsed = JSON.parse(xhr.responseText);
+            errText = parsed.error || parsed.content?.[0]?.text || errText;
+          } catch {}
+          setTransfers(prev => prev.map(item => item.id === id ? {
+            ...item,
+            status: "error",
+            error: errText,
+            speed: ""
+          } : item));
+          reject(new Error(errText));
+        }
+      };
+
+      xhr.onerror = () => {
+        setTransfers(prev => prev.map(item => item.id === id ? {
+          ...item,
+          status: "error",
+          error: "Network error",
+          speed: ""
+        } : item));
+        reject(new Error("Network error"));
+      };
+
+      xhr.onabort = () => {
+        setTransfers(prev => prev.map(item => item.id === id ? {
+          ...item,
+          status: "aborted",
+          error: t("sftpTransferAborted"),
+          speed: ""
+        } : item));
+        reject(new Error("Upload aborted"));
+      };
+
+      xhr.open("POST", `${API_BASE}/api/sessions/${sessionId}/sftp/upload?path=${encodeURIComponent(remotePath)}`);
+      xhr.send(formData);
     });
-    const data = await res.json();
-    if (!res.ok || data.isError) {
-      throw new Error(data.error || data.content?.[0]?.text || `Upload failed (${res.status})`);
-    }
   };
 
-  // Upload file via file picker
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      await uploadFileBlob(file);
-      showStatus(`✓ ${t("sftpUploadOk")}: ${file.name}`, "success");
+  const executeBatchUpload = async (filesToUpload: globalThis.File[]) => {
+    if (filesToUpload.length === 0) return;
+    setIsTransfersExpanded(true);
+    let successCount = 0;
+    for (const file of filesToUpload) {
+      try {
+        await uploadWithProgress(file);
+        successCount++;
+      } catch {}
+    }
+    if (successCount > 0) {
+      showStatus(`✓ ${t("sftpUploadOk")} (${successCount}/${filesToUpload.length})`, "success");
       loadFiles(path);
-    } catch (error: unknown) {
-      showStatus(`✗ ${errorMessage(error)}`, "error");
-    } finally {
-      if (uploadRef.current) uploadRef.current.value = "";
     }
   };
 
-  // Drag and drop upload
-  const handleDrop = async (e: React.DragEvent) => {
+  const handleIncomingFiles = (incoming: globalThis.File[]) => {
+    if (incoming.length === 0) return;
+    const existingNames = new Set(files.map(f => f.name));
+    const conflicts = incoming.filter(f => existingNames.has(f.name)).map(f => f.name);
+
+    if (conflicts.length > 0) {
+      setConflictFiles({ existing: conflicts, pending: incoming });
+    } else {
+      executeBatchUpload(incoming);
+    }
+  };
+
+  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(e.target.files || []);
+    if (uploadRef.current) uploadRef.current.value = "";
+    if (selected.length > 0) {
+      handleIncomingFiles(selected);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDraggingOver(false);
     const droppedFiles = Array.from(e.dataTransfer.files);
-    if (droppedFiles.length === 0) return;
+    if (droppedFiles.length > 0) {
+      handleIncomingFiles(droppedFiles);
+    }
+  };
 
-    setLoading(true);
-    let successCount = 0;
-    for (const file of droppedFiles) {
-      try {
-        await uploadFileBlob(file);
-        successCount++;
-      } catch (error: unknown) {
-        showStatus(`✗ ${file.name}: ${errorMessage(error)}`, "error");
-      }
+  const handleCancelTransfer = (transferId: string) => {
+    const item = transfers.find(t => t.id === transferId);
+    if (item && item.xhr && item.status === "uploading") {
+      item.xhr.abort();
     }
-    if (successCount > 0) {
-      showStatus(`✓ ${t("sftpUploadOk")} (${successCount})`, "success");
-      loadFiles(path);
-    } else {
-      setLoading(false);
-    }
+  };
+
+  const handleClearCompletedTransfers = () => {
+    setTransfers(prev => prev.filter(t => t.status === "uploading"));
   };
 
   const handleStartEditPath = () => {
@@ -286,8 +461,17 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
     searchQuery.trim() === "" || f.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const activeTransfersCount = transfers.filter(t => t.status === "uploading").length;
+  const completedTransfersCount = transfers.filter(t => t.status === "done").length;
+  const totalActivePercent = activeTransfersCount > 0
+    ? Math.round(
+        transfers.filter(t => t.status === "uploading").reduce((acc, cur) => acc + cur.percent, 0) /
+        activeTransfersCount
+      )
+    : 0;
+
   return (
-    <div className="sftp-page">
+    <div className="sftp-page" style={{ position: "relative", height: "100%", display: "flex", flexDirection: "column" }}>
       {/* Top Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -320,7 +504,7 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
       </div>
 
       {/* Toolbar & Path Breadcrumb */}
-      <div className="sftp-toolbar shadcn-card" style={{ padding: "8px 12px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", borderRadius: "8px" }}>
+      <div className="sftp-toolbar shadcn-card" style={{ padding: "8px 12px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", borderRadius: "8px", marginTop: "10px" }}>
         {/* Back Button */}
         <button
           onClick={handleBack}
@@ -440,6 +624,7 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
             <span>{t("sftpMkdir")}</span>
           </button>
 
+          {/* Multiple File Upload */}
           <button
             onClick={() => uploadRef.current?.click()}
             className="shadcn-btn shadcn-btn-primary"
@@ -448,7 +633,7 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
             <UploadCloud size={14} />
             <span>{t("sftpUpload")}</span>
           </button>
-          <input ref={uploadRef} type="file" style={{ display: "none" }} onChange={handleUpload} />
+          <input ref={uploadRef} type="file" multiple style={{ display: "none" }} onChange={handleUpload} />
 
           <button
             onClick={() => loadFiles(path)}
@@ -461,9 +646,134 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
         </div>
       </div>
 
+      {/* Batch Actions Bar (Visible when items selected) */}
+      {selectedNames.size > 0 && (
+        <div className="shadcn-card" style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "6px 14px",
+          borderRadius: "6px",
+          marginTop: "6px",
+          background: "rgba(15, 118, 110, 0.15)",
+          border: "1px solid rgba(20, 184, 166, 0.4)",
+          fontSize: "12px",
+          color: "#2dd4bf"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <CheckSquare size={14} />
+            <span>{t("sftpSelectedCount")}: <strong>{selectedNames.size}</strong></span>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              onClick={handleBatchDownload}
+              className="shadcn-btn shadcn-btn-outline"
+              style={{ height: "26px", padding: "0 8px", fontSize: "11px", gap: "4px" }}
+            >
+              <Download size={12} />
+              <span>{t("sftpBatchDownload")}</span>
+            </button>
+            <button
+              onClick={handleBatchDelete}
+              className="shadcn-btn shadcn-btn-outline"
+              style={{ height: "26px", padding: "0 8px", fontSize: "11px", color: "hsl(var(--destructive))", gap: "4px" }}
+            >
+              <Trash2 size={12} />
+              <span>{t("sftpBatchDelete")}</span>
+            </button>
+            <button
+              onClick={() => setSelectedNames(new Set())}
+              className="shadcn-btn shadcn-btn-ghost"
+              style={{ height: "26px", padding: "0 8px", fontSize: "11px" }}
+            >
+              {t("sftpClearSelection")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Conflict Modal */}
+      {conflictFiles && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 60,
+          background: "rgba(0,0,0,0.65)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "20px"
+        }}>
+          <div className="shadcn-card" style={{
+            width: "440px",
+            maxWidth: "100%",
+            padding: "20px",
+            borderRadius: "10px",
+            background: "#131e29",
+            border: "1px solid #2dd4bf",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.5)"
+          }}>
+            <h3 style={{ margin: "0 0 10px", fontSize: "15px", color: "#f8fafc", display: "flex", alignItems: "center", gap: "8px" }}>
+              <AlertCircle size={18} style={{ color: "#f59e0b" }} />
+              {t("sftpConflictTitle")}
+            </h3>
+            <p style={{ margin: "0 0 12px", fontSize: "12px", color: "#94a3b8" }}>
+              {t("sftpConflictDesc")}
+            </p>
+            <div style={{
+              maxHeight: "120px",
+              overflowY: "auto",
+              background: "#0b1219",
+              padding: "8px 12px",
+              borderRadius: "6px",
+              marginBottom: "16px",
+              fontSize: "12px",
+              fontFamily: "monospace",
+              color: "#f8fafc"
+            }}>
+              {conflictFiles.existing.map((f, i) => (
+                <div key={i} style={{ padding: "2px 0" }}>• {f}</div>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+              <button
+                onClick={() => setConflictFiles(null)}
+                className="shadcn-btn shadcn-btn-outline"
+                style={{ height: "32px", fontSize: "12px" }}
+              >
+                {t("cancelBtn")}
+              </button>
+              <button
+                onClick={() => {
+                  const toUpload = conflictFiles.pending.filter(f => !conflictFiles.existing.includes(f.name));
+                  setConflictFiles(null);
+                  executeBatchUpload(toUpload);
+                }}
+                className="shadcn-btn shadcn-btn-secondary"
+                style={{ height: "32px", fontSize: "12px" }}
+              >
+                {t("sftpSkip")}
+              </button>
+              <button
+                onClick={() => {
+                  const toUpload = conflictFiles.pending;
+                  setConflictFiles(null);
+                  executeBatchUpload(toUpload);
+                }}
+                className="shadcn-btn shadcn-btn-primary"
+                style={{ height: "32px", fontSize: "12px" }}
+              >
+                {t("sftpOverwrite")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Mkdir inline input */}
       {mkdirMode && (
-        <div className="shadcn-card" style={{ display: "flex", gap: "8px", alignItems: "center", padding: "10px 14px", borderRadius: "8px" }}>
+        <div className="shadcn-card" style={{ display: "flex", gap: "8px", alignItems: "center", padding: "10px 14px", borderRadius: "8px", marginTop: "6px" }}>
           <FolderPlus size={16} style={{ color: "#f59e0b" }} />
           <input
             autoFocus
@@ -485,7 +795,7 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
 
       {/* Rename inline input */}
       {renameTarget && (
-        <div className="shadcn-card" style={{ display: "flex", gap: "8px", alignItems: "center", padding: "10px 14px", borderRadius: "8px" }}>
+        <div className="shadcn-card" style={{ display: "flex", gap: "8px", alignItems: "center", padding: "10px 14px", borderRadius: "8px", marginTop: "6px" }}>
           <Pencil size={15} style={{ color: "hsl(var(--primary))" }} />
           <span style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>
             {t("sftpRenamePrefix")}: <strong style={{ color: "hsl(var(--foreground))" }}>{renameTarget.name}</strong> →
@@ -516,6 +826,7 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
           overflowY: "auto",
           position: "relative",
           borderRadius: "8px",
+          marginTop: "10px",
         }}
         onDragOver={(e) => {
           e.preventDefault();
@@ -530,7 +841,7 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
             position: "absolute",
             inset: 0,
             zIndex: 30,
-            background: "rgba(15, 23, 42, 0.75)",
+            background: "rgba(15, 23, 42, 0.8)",
             backdropFilter: "blur(4px)",
             display: "flex",
             flexDirection: "column",
@@ -561,6 +872,15 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
           <table className="sftp-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid hsl(var(--border))", color: "hsl(var(--muted-foreground))", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                <th style={{ padding: "10px 14px", width: "40px", textAlign: "center" }}>
+                  <button
+                    onClick={handleSelectAll}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: selectedNames.size > 0 ? "#2dd4bf" : "#64748b", padding: 0 }}
+                    title={t("sftpSelectAll")}
+                  >
+                    {selectedNames.size === filteredFiles.length && filteredFiles.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
+                  </button>
+                </th>
                 <th style={{ padding: "10px 14px" }}>{t("fileName")}</th>
                 <th style={{ padding: "10px 14px", width: "95px" }}>{t("fileType")}</th>
                 <th style={{ padding: "10px 14px", width: "95px" }}>{t("fileSize")}</th>
@@ -571,6 +891,7 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
             <tbody>
               {filteredFiles.map((file, idx) => {
                 const isSelected = selectedFile?.name === file.name;
+                const isChecked = selectedNames.has(file.name);
                 return (
                   <tr
                     key={idx}
@@ -579,12 +900,20 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
                     style={{
                       borderBottom: "1px solid hsl(var(--border))",
                       cursor: "pointer",
-                      backgroundColor: isSelected ? "hsl(var(--accent))" : "transparent",
+                      backgroundColor: isChecked ? "rgba(45, 212, 191, 0.12)" : isSelected ? "hsl(var(--accent))" : "transparent",
                       transition: "background-color 0.12s ease"
                     }}
-                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = "hsl(var(--accent) / 0.35)"; }}
-                    onMouseLeave={e => { if (!isSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
+                    onMouseEnter={e => { if (!isSelected && !isChecked) e.currentTarget.style.backgroundColor = "hsl(var(--accent) / 0.35)"; }}
+                    onMouseLeave={e => { if (!isSelected && !isChecked) e.currentTarget.style.backgroundColor = "transparent"; }}
                   >
+                    <td style={{ padding: "9px 14px", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+                      <button
+                        onClick={(e) => handleToggleSelect(file.name, e)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: isChecked ? "#2dd4bf" : "#64748b", padding: 0 }}
+                      >
+                        {isChecked ? <CheckSquare size={14} /> : <Square size={14} />}
+                      </button>
+                    </td>
                     <td style={{ padding: "9px 14px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "9px" }}>
                         <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
@@ -678,6 +1007,134 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
           </table>
         )}
       </div>
+
+      {/* Floating Transfer Queue Drawer */}
+      {transfers.length > 0 && (
+        <div style={{
+          position: "absolute",
+          right: "16px",
+          bottom: "16px",
+          width: "380px",
+          maxWidth: "calc(100% - 32px)",
+          zIndex: 50,
+          borderRadius: "8px",
+          background: "#101923",
+          border: "1px solid #243342",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden"
+        }}>
+          {/* Drawer Header */}
+          <div style={{
+            padding: "8px 12px",
+            background: "#162330",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderBottom: isTransfersExpanded ? "1px solid #243342" : "none"
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", fontWeight: 600, color: "#f8fafc" }}>
+              <UploadCloud size={15} style={{ color: "#2dd4bf" }} />
+              <span>{t("sftpTransfers")}</span>
+              <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 400 }}>
+                ({completedTransfersCount}/{transfers.length})
+                {activeTransfersCount > 0 && ` · ${totalActivePercent}%`}
+              </span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              {activeTransfersCount === 0 && (
+                <button
+                  onClick={handleClearCompletedTransfers}
+                  className="shadcn-btn shadcn-btn-ghost"
+                  style={{ height: "24px", padding: "0 6px", fontSize: "11px", color: "#94a3b8" }}
+                  title="Clear finished"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+              <button
+                onClick={() => setIsTransfersExpanded(!isTransfersExpanded)}
+                className="shadcn-btn shadcn-btn-ghost"
+                style={{ height: "24px", width: "24px", padding: 0, color: "#94a3b8" }}
+              >
+                {isTransfersExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Drawer Body */}
+          {isTransfersExpanded && (
+            <div style={{ maxHeight: "220px", overflowY: "auto", padding: "6px 8px" }}>
+              {transfers.map(item => (
+                <div key={item.id} style={{
+                  padding: "8px",
+                  borderRadius: "6px",
+                  background: "#0c131a",
+                  marginBottom: "6px",
+                  border: "1px solid #1c2a38"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {item.status === "done" && <CheckCircle2 size={13} style={{ color: "#2dd4bf", flexShrink: 0 }} />}
+                      {item.status === "error" && <AlertCircle size={13} style={{ color: "#f87171", flexShrink: 0 }} />}
+                      {item.status === "aborted" && <XCircle size={13} style={{ color: "#94a3b8", flexShrink: 0 }} />}
+                      {item.status === "uploading" && <RefreshCw size={12} className="is-spinning" style={{ color: "#38bdf8", flexShrink: 0 }} />}
+                      <span style={{ fontSize: "12px", color: "#f8fafc", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {item.name}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                        {formatBytes(item.size)}
+                      </span>
+                      {item.status === "uploading" && (
+                        <button
+                          onClick={() => handleCancelTransfer(item.id)}
+                          style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", padding: "1px" }}
+                          title={t("cancelBtn")}
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div style={{
+                    width: "100%",
+                    height: "4px",
+                    background: "rgba(255,255,255,0.08)",
+                    borderRadius: "2px",
+                    overflow: "hidden",
+                    marginBottom: "4px"
+                  }}>
+                    <div style={{
+                      height: "100%",
+                      width: `${item.percent}%`,
+                      background: item.status === "error" ? "#f87171" : item.status === "aborted" ? "#64748b" : "#2dd4bf",
+                      transition: "width 0.2s ease"
+                    }} />
+                  </div>
+
+                  {/* Subtext info */}
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "10px", color: "#64748b" }}>
+                    <span>
+                      {item.status === "uploading" && `${item.percent}% ${item.speed ? `· ${item.speed}` : ""}`}
+                      {item.status === "done" && <span style={{ color: "#2dd4bf" }}>{t("sftpTransferCompleted")}</span>}
+                      {item.status === "error" && <span style={{ color: "#f87171" }}>{item.error || t("sftpTransferFailed")}</span>}
+                      {item.status === "aborted" && t("sftpTransferAborted")}
+                    </span>
+                    {item.status === "uploading" && (
+                      <span>{formatBytes(item.loaded)} / {formatBytes(item.size)}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -708,6 +1165,7 @@ function renderFileIcon(file: SftpFile) {
 
 // Helper: format bytes
 function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;

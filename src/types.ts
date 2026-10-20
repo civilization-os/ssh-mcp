@@ -88,6 +88,10 @@ export type SshScriptArgs = {
 export type SshFileReadArgs = {
   sessionId?: string;
   path: string;
+  encoding?: "utf-8" | "base64";
+  offset?: number;
+  length?: number;
+  tail?: number;
   timeout?: number;
 } & Partial<SshCredentials>;
 
@@ -95,6 +99,8 @@ export type SshFileWriteArgs = {
   sessionId?: string;
   path: string;
   content: string;
+  encoding?: "utf-8" | "base64";
+  append?: boolean;
   mkdir?: boolean;
   timeout?: number;
 } & Partial<SshCredentials>;
