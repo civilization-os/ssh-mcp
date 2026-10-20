@@ -110,6 +110,7 @@ export type SshFileUploadArgs = {
   localPath: string;
   path: string;
   mkdir?: boolean;
+  overwrite?: boolean;
   timeout?: number;
 } & Partial<SshCredentials>;
 

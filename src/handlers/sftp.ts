@@ -59,13 +59,18 @@ export async function handleReadFile(args: SshFileReadArgs) {
         ? start + args.length - 1
         : undefined;
 
-      if (args.tail !== undefined && args.tail > 0 && typeof sftp.stat === "function") {
+      if (typeof sftp.stat === "function") {
         const fileStat = await new Promise<import("ssh2").Stats | null>((resolve) => {
           sftp.stat(args.path, (err, st) => resolve(err ? null : st));
         });
-        if (fileStat && fileStat.size > args.tail) {
-          start = fileStat.size - args.tail;
-          end = undefined;
+        if (fileStat) {
+          if (typeof fileStat.isDirectory === "function" && fileStat.isDirectory()) {
+            throw new Error(`Remote path is a directory, not a file: '${args.path}'`);
+          }
+          if (args.tail !== undefined && args.tail > 0 && fileStat.size > args.tail) {
+            start = fileStat.size - args.tail;
+            end = undefined;
+          }
         }
       }
 
@@ -81,7 +86,9 @@ export async function handleReadFile(args: SshFileReadArgs) {
           const buf = Buffer.concat(chunks);
           resolve(args.encoding === "base64" ? buf.toString("base64") : buf.toString("utf-8"));
         });
-        stream.on("error", reject);
+        stream.on("error", (err: any) => {
+          reject(new Error(`Failed to read '${args.path}': ${err.message}`));
+        });
       });
     })
   ) as string;
@@ -98,20 +105,38 @@ export async function handleWriteFile(args: SshFileWriteArgs) {
 
   await resolveClient(args, (client) =>
     withSftp(client, args.timeout ?? 30000, async (sftp) => {
-      if (args.mkdir) {
-        const dir = args.path.substring(0, args.path.lastIndexOf("/"));
-        if (dir) {
-          try {
-            await sftpMkdir(sftp, dir, true);
-          } catch { /* may already exist */ }
+      if (typeof sftp.stat === "function") {
+        const targetStat = await new Promise<import("ssh2").Stats | null>((res) => {
+          sftp.stat(args.path, (err, st) => res(err ? null : st));
+        });
+        if (targetStat && typeof targetStat.isDirectory === "function" && targetStat.isDirectory()) {
+          throw new Error(`Remote destination is a directory, not a file: '${args.path}'`);
         }
       }
+
+      const dir = args.path.substring(0, args.path.lastIndexOf("/"));
+      if (dir) {
+        if (args.mkdir) {
+          await sftpMkdir(sftp, dir, true);
+        } else if (typeof sftp.stat === "function") {
+          const parentStat = await new Promise<import("ssh2").Stats | null>((res) => {
+            sftp.stat(dir, (err, st) => res(err ? null : st));
+          });
+          if (!parentStat) {
+            throw new Error(`Remote parent directory does not exist: '${dir}'. Pass mkdir=true to create it.`);
+          }
+          if (typeof parentStat.isDirectory === "function" && !parentStat.isDirectory()) {
+            throw new Error(`Remote parent path is not a directory: '${dir}'`);
+          }
+        }
+      }
+
       return new Promise<void>((resolve, reject) => {
         const stream = sftp.createWriteStream(args.path, {
           flags: args.append ? "a" : "w",
         });
         stream.on("close", () => resolve());
-        stream.on("error", reject);
+        stream.on("error", (err: any) => reject(new Error(`Failed to write to '${args.path}': ${err.message}`)));
         stream.end(buf);
       });
     })
@@ -134,44 +159,107 @@ export async function handleUploadFile(args: SshFileUploadArgs) {
     throw new Error("localPath must be an absolute path on the Desktop computer");
   }
 
-  const localStat = await stat(args.localPath);
-  if (!localStat.isFile()) {
+  let localStatResult;
+  try {
+    localStatResult = await stat(args.localPath);
+  } catch (err: any) {
+    throw new Error(`Local source file not found: ${args.localPath} (${err.message})`);
+  }
+
+  if (!localStatResult.isFile()) {
     throw new Error(`Local path is not a file: ${args.localPath}`);
   }
 
   let finalRemotePath = args.path;
   await resolveClient(args, client =>
     withSftp(client, args.timeout ?? 300000, async sftp => {
-      // Auto-append source filename if remote path ends with / or is an existing directory
+      // 1. Auto-append source filename if remote path ends with / or is an existing directory
       if (finalRemotePath.endsWith("/")) {
         finalRemotePath = path.posix.join(finalRemotePath, path.basename(args.localPath));
       } else if (typeof sftp.stat === "function") {
         const remoteStat = await new Promise<import("ssh2").Stats | null>(resolve => {
           sftp.stat(finalRemotePath, (err, stats) => resolve(err ? null : stats));
         });
-        if (remoteStat && remoteStat.isDirectory()) {
+        if (remoteStat && typeof remoteStat.isDirectory === "function" && remoteStat.isDirectory()) {
           finalRemotePath = path.posix.join(finalRemotePath, path.basename(args.localPath));
         }
       }
 
-      if (args.mkdir) {
-        const dir = finalRemotePath.substring(0, finalRemotePath.lastIndexOf("/"));
-        if (dir) await sftpMkdir(sftp, dir, true);
+      // 2. Parent directory verification and creation
+      const dir = finalRemotePath.substring(0, finalRemotePath.lastIndexOf("/"));
+      if (dir) {
+        if (args.mkdir) {
+          await sftpMkdir(sftp, dir, true);
+        } else if (typeof sftp.stat === "function") {
+          const parentStat = await new Promise<import("ssh2").Stats | null>(resolve => {
+            sftp.stat(dir, (err, stats) => resolve(err ? null : stats));
+          });
+          if (!parentStat) {
+            throw new Error(`Remote parent directory does not exist: '${dir}'. Pass mkdir=true to create it.`);
+          }
+          if (typeof parentStat.isDirectory === "function" && !parentStat.isDirectory()) {
+            throw new Error(`Remote parent path is not a directory: '${dir}'`);
+          }
+        }
       }
 
+      // 3. Check if target remote file already exists (overwrite check)
+      let targetExists = false;
+      if (typeof sftp.stat === "function") {
+        const targetStat = await new Promise<import("ssh2").Stats | null>(resolve => {
+          sftp.stat(finalRemotePath, (err, stats) => resolve(err ? null : stats));
+        });
+        if (targetStat) {
+          if (typeof targetStat.isDirectory === "function" && targetStat.isDirectory()) {
+            throw new Error(`Remote destination is a directory: '${finalRemotePath}'`);
+          }
+          if (!args.overwrite) {
+            throw new Error(`Remote destination already exists: '${finalRemotePath}'. Pass overwrite=true to replace it.`);
+          }
+          targetExists = true;
+        }
+      }
+
+      // 4. Stream to temporary file first (atomicity & safety)
       const temporaryPath = `${finalRemotePath}.ssh-mcp-upload-${randomBytes(8).toString("hex")}.tmp`;
+      let writeStarted = false;
       try {
+        writeStarted = true;
         await pipeline(
           createReadStream(args.localPath),
           sftp.createWriteStream(temporaryPath),
         );
+
+        // 5. If target exists and overwrite=true, unlink existing file before renaming
+        // Because SFTP v3 (OpenSSH) rename fails with SSH_FX_FAILURE if destination exists!
+        if (targetExists) {
+          await new Promise<void>((resolve, reject) => {
+            sftp.unlink(finalRemotePath, (unlinkErr) => {
+              if (unlinkErr) {
+                reject(new Error(`Failed to remove existing remote file for overwrite '${finalRemotePath}': ${unlinkErr.message}`));
+              } else {
+                resolve();
+              }
+            });
+          });
+        }
+
+        // 6. Rename temporary file to destination
         await new Promise<void>((resolve, reject) => {
-          sftp.rename(temporaryPath, finalRemotePath, error => error ? reject(error) : resolve());
+          sftp.rename(temporaryPath, finalRemotePath, (renameErr) => {
+            if (renameErr) {
+              reject(new Error(`Failed to rename temporary upload file to '${finalRemotePath}': ${renameErr.message}`));
+            } else {
+              resolve();
+            }
+          });
         });
-      } catch (error) {
-        await new Promise<void>(resolve => {
-          sftp.unlink(temporaryPath, () => resolve());
-        });
+      } catch (error: any) {
+        if (writeStarted) {
+          await new Promise<void>(resolve => {
+            sftp.unlink(temporaryPath, () => resolve());
+          });
+        }
         throw error;
       }
     })
@@ -181,7 +269,7 @@ export async function handleUploadFile(args: SshFileUploadArgs) {
   return {
     content: [{
       type: "text" as const,
-      text: `Uploaded ${localStat.size} bytes from ${args.localPath} to ${finalRemotePath}`,
+      text: `Uploaded ${localStatResult.size} bytes from ${args.localPath} to ${finalRemotePath}`,
     }],
   };
 }
@@ -280,7 +368,7 @@ export async function handleDownloadFile(args: SshFileDownloadArgs) {
     const downloadedBytes = await resolveClient(args, client =>
       withSftp(client, args.timeout ?? 300000, async sftp => {
         const remoteStat = await new Promise<import("ssh2").Stats>((resolve, reject) => {
-          sftp.stat(args.path, (error, value) => error ? reject(error) : resolve(value));
+          sftp.stat(args.path, (error, value) => error ? reject(new Error(`Remote source file not found or inaccessible: '${args.path}' (${error.message})`)) : resolve(value));
         });
         if (!remoteStat.isFile()) {
           throw new Error(`Remote path is not a file: ${args.path}`);
@@ -354,12 +442,37 @@ export async function handleListDir(args: SshFileListArgs) {
 
 export async function handleDelete(args: SshFileDeleteArgs) {
   await resolveClient(args, (client) =>
-    withSftp(client, args.timeout ?? 30000, (sftp) => {
+    withSftp(client, args.timeout ?? 30000, async (sftp) => {
       if (args.recursive) {
         return sftpDeleteRecursive(sftp, args.path);
       }
+
+      // Check whether target is a directory or file
+      if (typeof sftp.stat === "function") {
+        const stats = await new Promise<import("ssh2").Stats | null>((res) => {
+          sftp.stat(args.path, (err, st) => res(err ? null : st));
+        });
+        if (stats && typeof stats.isDirectory === "function" && stats.isDirectory()) {
+          return new Promise<void>((resolve, reject) => {
+            sftp.rmdir(args.path, (err) => {
+              if (err) {
+                reject(new Error(`Cannot delete directory '${args.path}' (${err.message}). If it contains files, pass recursive=true to delete.`));
+              } else {
+                resolve();
+              }
+            });
+          });
+        }
+      }
+
       return new Promise<void>((resolve, reject) => {
-        sftp.unlink(args.path, (err) => err ? reject(err) : resolve());
+        sftp.unlink(args.path, (err) => {
+          if (err) {
+            reject(new Error(`Failed to delete '${args.path}': ${err.message}`));
+          } else {
+            resolve();
+          }
+        });
       });
     })
   );
@@ -419,36 +532,77 @@ export async function handleRename(args: SshFileRenameArgs) {
 // --- Mkdir ---
 
 function sftpMkdir(sftp: import("ssh2").SFTPWrapper, path: string, parents: boolean): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (parents) {
-      const parts = path.replace(/\/$/, "").split("/").filter(Boolean);
-      let acc = parts[0]?.startsWith("/") ? "" : "";
-      const chain = parts.map((p, i) => {
-        acc += (i === 0 && parts[0].startsWith("/")) ? p : `/${p}`;
-        return acc;
+  if (!parents) {
+    return new Promise((resolve, reject) => {
+      sftp.mkdir(path, (err) => {
+        if (err) {
+          reject(new Error(`Failed to create remote directory '${path}': ${err.message}`));
+        } else {
+          resolve();
+        }
       });
-      let idx = 0;
-      const next = () => {
-        if (idx >= chain.length) { resolve(); return; }
-        sftp.mkdir(chain[idx++], (err) => {
-          if (err && (err as unknown as { code?: string }).code !== "EEXIST") {
-            reject(err);
-          } else {
-            next();
+    });
+  }
+
+  const parts = path.replace(/\/$/, "").split("/").filter(Boolean);
+  let current = path.startsWith("/") ? "" : "";
+
+  return new Promise((resolve, reject) => {
+    let idx = 0;
+    const processNext = async () => {
+      if (idx >= parts.length) {
+        return resolve();
+      }
+      current += `/${parts[idx++]}`;
+
+      // 1. If sftp.stat is available, check if directory exists
+      if (typeof sftp.stat === "function") {
+        try {
+          const stats = await new Promise<import("ssh2").Stats | null>((res) => {
+            sftp.stat(current, (err, st) => res(err ? null : st));
+          });
+          if (stats) {
+            if (typeof stats.isDirectory === "function" && !stats.isDirectory()) {
+              return reject(new Error(`Path already exists and is not a directory: '${current}'`));
+            }
+            // Directory exists, proceed to next component
+            return processNext();
           }
-        });
-      };
-      next();
-    } else {
-      sftp.mkdir(path, (err) => err ? reject(err) : resolve());
-    }
+        } catch {
+          // Ignore stat check error and attempt mkdir
+        }
+      }
+
+      // 2. Directory does not exist, attempt to create it
+      sftp.mkdir(current, (err) => {
+        if (!err) {
+          return processNext();
+        }
+        // If error occurred, check if directory actually exists
+        if (typeof sftp.stat === "function") {
+          sftp.stat(current, (statErr, st) => {
+            if (!statErr && st && typeof st.isDirectory === "function" && st.isDirectory()) {
+              return processNext();
+            }
+            reject(new Error(`Failed to create remote directory '${current}': ${err.message}`));
+          });
+        } else {
+          if ((err as any)?.code === "EEXIST") {
+            return processNext();
+          }
+          reject(new Error(`Failed to create remote directory '${current}': ${err.message}`));
+        }
+      });
+    };
+
+    processNext();
   });
 }
 
 export async function handleMkdir(args: SshFileMkdirArgs) {
   await resolveClient(args, (client) =>
     withSftp(client, args.timeout ?? 30000, (sftp) =>
-      sftpMkdir(sftp, args.path, args.parents ?? false)
+      sftpMkdir(sftp, args.path, args.parents ?? true)
     )
   );
 

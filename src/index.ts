@@ -219,6 +219,7 @@ const TOOL_CATALOG = [
           localPath: { type: "string", description: "Absolute path to the source file on the SSH-MCP Desktop computer" },
           path: { type: "string", description: "Absolute destination path or destination directory on the remote server" },
           mkdir: { type: "boolean", description: "Create remote parent directories if they do not exist", default: false },
+          overwrite: { type: "boolean", description: "Replace an existing remote file (default: false)", default: false },
           timeout: { type: "number", description: "Upload timeout in milliseconds (default: 300000)", default: 300000 },
         },
         required: ["localPath", "path"],

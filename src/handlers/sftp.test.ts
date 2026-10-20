@@ -42,6 +42,18 @@ describe("handleReadFile", () => {
     });
     expect(result.content[0].text).toBe(raw.subarray(1, 3).toString("base64"));
   });
+
+  it("rejects when target path is a directory", async () => {
+    vi.doMock("../session.js", () => ({
+      resolveClient: vi.fn((_a: any, fn: (c: any) => Promise<any>) => fn({
+        sftp: vi.fn((cb: Function) => cb(null, makeSftp({
+          stat: (_p: string, cb2: Function) => cb2(null, { isDirectory: () => true, isFile: () => false }),
+        }))),
+      })),
+    }));
+    const { handleReadFile } = await import("./sftp.js");
+    await expect(handleReadFile({ path: "/etc" })).rejects.toThrow("is a directory");
+  });
 });
 
 describe("handleWriteFile", () => {
@@ -129,6 +141,128 @@ describe("handleUploadFile", () => {
         expect.any(Function),
       );
       expect(result.content[0].text).toContain(`Uploaded ${expected.length} bytes`);
+    } finally {
+      await rm(localDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects when destination already exists and overwrite is false", async () => {
+    const localDirectory = await mkdtemp(path.join(tmpdir(), "ssh-mcp-upload-exist-"));
+    const localPath = path.join(localDirectory, "fixture.bin");
+    await writeFile(localPath, "data");
+
+    vi.doMock("../session.js", () => ({
+      resolveClient: vi.fn((_args: unknown, fn: (client: any) => Promise<unknown>) => fn({
+        sftp: vi.fn((callback: Function) => callback(null, makeSftp({
+          stat: (targetPath: string, cb: Function) => {
+            if (targetPath === "/opt/app") {
+              cb(null, { isDirectory: () => true, isFile: () => false });
+            } else {
+              cb(null, { isDirectory: () => false, isFile: () => true });
+            }
+          },
+        }))),
+      })),
+    }));
+
+    try {
+      const { handleUploadFile } = await import("./sftp.js");
+      await expect(handleUploadFile({
+        localPath,
+        path: "/opt/app/fixture.bin",
+        overwrite: false,
+      })).rejects.toThrow("overwrite=true");
+    } finally {
+      await rm(localDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("unlinks existing file and overwrites when overwrite=true", async () => {
+    const localDirectory = await mkdtemp(path.join(tmpdir(), "ssh-mcp-upload-ow-"));
+    const localPath = path.join(localDirectory, "fixture.bin");
+    await writeFile(localPath, "new content");
+
+    const unlink = vi.fn((_target: string, cb: Function) => cb(null));
+    const rename = vi.fn((_src: string, _dst: string, cb: Function) => cb(null));
+    const createWriteStream = vi.fn(() => new Writable({
+      write(_c, _e, cb) { cb(); },
+    }));
+
+    vi.doMock("../session.js", () => ({
+      resolveClient: vi.fn((_args: unknown, fn: (client: any) => Promise<unknown>) => fn({
+        sftp: vi.fn((callback: Function) => callback(null, makeSftp({
+          stat: (targetPath: string, cb: Function) => {
+            if (targetPath === "/opt/app") {
+              cb(null, { isDirectory: () => true, isFile: () => false });
+            } else {
+              cb(null, { isDirectory: () => false, isFile: () => true });
+            }
+          },
+          unlink,
+          rename,
+          createWriteStream,
+        }))),
+      })),
+    }));
+
+    try {
+      const { handleUploadFile } = await import("./sftp.js");
+      const result = await handleUploadFile({
+        localPath,
+        path: "/opt/app/fixture.bin",
+        overwrite: true,
+      }) as any;
+
+      expect(unlink).toHaveBeenCalledWith("/opt/app/fixture.bin", expect.any(Function));
+      expect(result.content[0].text).toContain("Uploaded");
+    } finally {
+      await rm(localDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("creates parent directory when mkdir=true skipping existing segments", async () => {
+    const localDirectory = await mkdtemp(path.join(tmpdir(), "ssh-mcp-upload-mkdir-"));
+    const localPath = path.join(localDirectory, "fixture.bin");
+    await writeFile(localPath, "data");
+
+    const createdDirs: string[] = [];
+    const mkdir = vi.fn((p: string, cb: Function) => {
+      createdDirs.push(p);
+      cb(null);
+    });
+    const rename = vi.fn((_src: string, _dst: string, cb: Function) => cb(null));
+    const createWriteStream = vi.fn(() => new Writable({
+      write(_c, _e, cb) { cb(); },
+    }));
+
+    vi.doMock("../session.js", () => ({
+      resolveClient: vi.fn((_args: unknown, fn: (client: any) => Promise<unknown>) => fn({
+        sftp: vi.fn((callback: Function) => callback(null, makeSftp({
+          stat: (targetPath: string, cb: Function) => {
+            // Simulate /root exists as directory, but /root/newdir does not exist
+            if (targetPath === "/root") {
+              cb(null, { isDirectory: () => true, isFile: () => false });
+            } else {
+              cb(new Error("No such file"));
+            }
+          },
+          mkdir,
+          rename,
+          createWriteStream,
+        }))),
+      })),
+    }));
+
+    try {
+      const { handleUploadFile } = await import("./sftp.js");
+      await handleUploadFile({
+        localPath,
+        path: "/root/newdir/fixture.bin",
+        mkdir: true,
+      });
+
+      // /root was skipped, only /root/newdir was created!
+      expect(createdDirs).toEqual(["/root/newdir"]);
     } finally {
       await rm(localDirectory, { recursive: true, force: true });
     }
@@ -224,6 +358,23 @@ describe("handleDelete", () => {
     }));
     const { handleDelete } = await import("./sftp.js");
     const result = await handleDelete({ path: "/tmp/test.txt" }) as any;
+    expect(result.content[0].text).toContain("Deleted");
+  });
+
+  it("deletes directory using rmdir when target is directory", async () => {
+    const rmdir = vi.fn((_p: string, cb: Function) => cb(null));
+    vi.doMock("../session.js", () => ({
+      resolveClient: vi.fn((_a: any, fn: (c: any) => Promise<any>) => fn({
+        sftp: vi.fn((cb: Function) => cb(null, makeSftp({
+          stat: (_p: string, cb2: Function) => cb2(null, { isDirectory: () => true }),
+          rmdir,
+        }))),
+      })),
+      touchSession: vi.fn(),
+    }));
+    const { handleDelete } = await import("./sftp.js");
+    const result = await handleDelete({ path: "/tmp/empty_dir" }) as any;
+    expect(rmdir).toHaveBeenCalledWith("/tmp/empty_dir", expect.any(Function));
     expect(result.content[0].text).toContain("Deleted");
   });
 });

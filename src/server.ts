@@ -630,6 +630,16 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
               return sftp.createWriteStream(temporaryPath);
             });
 
+            // Check if destination exists; if so, unlink before rename because OpenSSH SFTP v3 fails rename if destination exists
+            const destStat = await new Promise<import("ssh2").Stats | null>(res => {
+              sftp.stat(finalUploadPath, (err, stats) => res(err ? null : stats));
+            });
+            if (destStat && !destStat.isDirectory()) {
+              await new Promise<void>(res => {
+                sftp.unlink(finalUploadPath, () => res());
+              });
+            }
+
             await new Promise<void>((resolve, reject) => {
               sftp.rename(temporaryPath, finalUploadPath, error => error ? reject(error) : resolve());
             });
