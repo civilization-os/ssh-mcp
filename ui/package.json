@@ -10,8 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@gsap/react": "^2.1.2",
     "@monaco-editor/react": "^4.7.0",
     "allotment": "^1.20.5",
+    "gsap": "^3.15.0",
     "lucide-react": "^1.25.0",
     "motion": "^14.6.0",
     "react": "^19.2.6",

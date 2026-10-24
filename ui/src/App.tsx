@@ -1,5 +1,8 @@
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
+import { GsapAnimatedNumber } from "./GsapAnimatedNumber";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { EditorView } from "./EditorView";
@@ -11,6 +14,8 @@ import { translations } from "./i18n";
 import type { Language } from "./i18n";
 import { DesktopSettingsControl } from "./DesktopSettings";
 import { McpSetupControl } from "./McpSetup";
+
+gsap.registerPlugin(useGSAP);
 import {
   Activity, ChevronLeft, ChevronRight, FileText, Pencil, Plus, Server,
   ShieldCheck, TerminalSquare, Trash2, Key, Lock, X, Check, Copy,
@@ -238,7 +243,16 @@ function SessionItem({
       <div className="session-card-foot" title={sess.connected ? translations[lang].heartbeatTooltip : (lang === "zh" ? "连接已断开，需要重新编辑输入密码/密钥重新连接" : "Connection disconnected, needs credentials to reconnect")}>
         <span className={`session-health ${sess.connected ? "is-online" : ""}`}><i /></span>
         <span>
-          {sess.connected ? translations[lang].heartbeatActive + (pingMs != null ? ` (${pingMs}ms)` : "") : (lang === "zh" ? "已断开" : "Disconnected")}
+          {sess.connected ? (
+            <>
+              {translations[lang].heartbeatActive}
+              {pingMs != null && (
+                <> (<GsapAnimatedNumber value={pingMs} decimals={0} suffix="ms" duration={0.35} />)</>
+              )}
+            </>
+          ) : (
+            lang === "zh" ? "已断开" : "Disconnected"
+          )}
         </span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "5px" }}>
           {sess.proxyEnabled && (
@@ -304,6 +318,22 @@ export default function App() {
   const [proxyUrlInput, setProxyUrlInput] = useState("");
   const [connectLoading, setConnectLoading] = useState(false);
   const [connectError, setConnectError] = useState("");
+  const sessionsListRef = useRef<HTMLDivElement>(null);
+  const initialSessionAnimateRef = useRef(false);
+
+  useGSAP(() => {
+    if (sessions.length > 0 && !initialSessionAnimateRef.current) {
+      initialSessionAnimateRef.current = true;
+      gsap.from(".session-card", {
+        opacity: 0,
+        x: -10,
+        duration: 0.32,
+        stagger: 0.04,
+        ease: "power2.out",
+        clearProps: "all",
+      });
+    }
+  }, { scope: sessionsListRef, dependencies: [sessions.length] });
 
   // Confirm delete modal
   const [confirmTarget, setConfirmTarget] = useState<{ id: string; label: string } | null>(null);
@@ -768,7 +798,7 @@ export default function App() {
           transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
           pointerEvents: sidebarCollapsed ? "none" : "auto"
         }}>
-          <div className="rail-scroll" style={{ width: "300px", padding: "16px 12px", height: "100%", overflowY: "auto", boxSizing: "border-box" }}>
+          <div ref={sessionsListRef} className="rail-scroll" style={{ width: "300px", padding: "16px 12px", height: "100%", overflowY: "auto", boxSizing: "border-box" }}>
           <div className="rail-section-heading">
             <div>
               {t("sessionsTitle")} ({sessions.length})

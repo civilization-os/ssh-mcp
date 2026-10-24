@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Search, Pause, Play, RefreshCw, X } from "lucide-react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { translations } from "./i18n";
 import type { Language } from "./i18n";
+import { GsapAnimatedNumber } from "./GsapAnimatedNumber";
+
+gsap.registerPlugin(useGSAP);
 
 interface MonitorViewProps {
   sessionId: string;
@@ -45,6 +50,18 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
   const [statsHistory, setStatsHistory] = useState<StatPoint[]>(createInitialStatsHistory);
   const [isPaused, setIsPaused] = useState(false);
   const [procFilter, setProcFilter] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    gsap.from(".monitor-stat-card", {
+      opacity: 0,
+      y: 10,
+      duration: 0.35,
+      stagger: 0.05,
+      ease: "power2.out",
+      clearProps: "all",
+    });
+  }, { scope: containerRef });
 
   const t = (key: keyof typeof translations["en"]): string => {
     return translations[lang][key] || translations["en"][key] || "";
@@ -146,7 +163,7 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
   );
 
   return (
-    <div className="monitor-page">
+    <div className="monitor-page" ref={containerRef}>
       <div className="monitor-hero">
         <div>
           <div className="monitor-kicker">{t("monitorKicker")}</div>
@@ -156,12 +173,16 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
         <div className="monitor-stat-strip">
           <div className="monitor-stat-card">
             <span>{t("monitorCpu")}</span>
-            <strong>{latestStats.cpu.toFixed(1)}%</strong>
+            <strong>
+              <GsapAnimatedNumber value={latestStats.cpu} decimals={1} suffix="%" />
+            </strong>
             <i className="monitor-dot monitor-dot-cpu" />
           </div>
           <div className="monitor-stat-card">
             <span>{t("monitorMemory")}</span>
-            <strong>{latestStats.mem.toFixed(1)}%</strong>
+            <strong>
+              <GsapAnimatedNumber value={latestStats.mem} decimals={1} suffix="%" />
+            </strong>
             <i className="monitor-dot monitor-dot-mem" />
           </div>
           <div className="monitor-stat-card monitor-stat-card-wide">
@@ -283,8 +304,16 @@ export function MonitorView({ sessionId, lang }: MonitorViewProps) {
                 {filteredProcesses.map((proc, idx) => (
                   <tr key={idx}>
                     <td>{proc.pid}</td>
-                    <td><span className="monitor-cpu">{proc.cpu}%</span></td>
-                    <td><span className="monitor-mem">{proc.mem}%</span></td>
+                    <td>
+                      <span className="monitor-cpu">
+                        <GsapAnimatedNumber value={parseFloat(proc.cpu) || 0} decimals={1} suffix="%" />
+                      </span>
+                    </td>
+                    <td>
+                      <span className="monitor-mem">
+                        <GsapAnimatedNumber value={parseFloat(proc.mem) || 0} decimals={1} suffix="%" />
+                      </span>
+                    </td>
                     <td title={proc.command}>{proc.command}</td>
                   </tr>
                 ))}

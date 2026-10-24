@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { translations } from "./i18n";
+
+gsap.registerPlugin(useGSAP);
 import type { Language } from "./i18n";
 import {
   Folder,
@@ -89,6 +93,24 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
   const [conflictFiles, setConflictFiles] = useState<{ existing: string[]; pending: globalThis.File[] } | null>(null);
 
   const uploadRef = useRef<HTMLInputElement>(null);
+  const tableCardRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!loading && files.length > 0) {
+      gsap.from(".sftp-row", {
+        opacity: 0,
+        y: 6,
+        duration: 0.22,
+        stagger: {
+          each: 0.015,
+          from: "start",
+          ease: "power1.out",
+        },
+        ease: "power2.out",
+        clearProps: "all",
+      });
+    }
+  }, { scope: tableCardRef, dependencies: [path, loading, searchQuery] });
 
   const t = (key: keyof typeof translations["en"]): string =>
     translations[lang][key] || translations["en"][key] || "";
@@ -847,6 +869,7 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
 
       {/* Files Table & Drag Drop Area */}
       <div
+        ref={tableCardRef}
         className="sftp-table-card shadcn-card"
         style={{
           flex: 1,
@@ -916,12 +939,13 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
               </tr>
             </thead>
             <tbody>
-              {filteredFiles.map((file, idx) => {
+              {filteredFiles.map((file) => {
                 const isSelected = selectedFile?.name === file.name;
                 const isChecked = selectedNames.has(file.name);
                 return (
                   <tr
-                    key={idx}
+                    key={file.name}
+                    className="sftp-row"
                     onClick={() => handleRowClick(file)}
                     onDoubleClick={() => handleRowDoubleClick(file)}
                     style={{
