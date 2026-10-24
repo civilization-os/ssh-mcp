@@ -128,6 +128,48 @@ describe("createProxySocket", () => {
   });
 });
 
+// ─── Global Proxy Resolution & Bypass Rules ────────────────────────────────
+
+describe("Global Proxy & Bypass Rules", () => {
+  it("correctly identifies bypassed hosts", async () => {
+    const { shouldBypassProxy } = await import("./session.js");
+    const rules = "localhost, 127.0.0.1, *.internal, 192.168.*, <local>";
+    expect(shouldBypassProxy("localhost", rules)).toBe(true);
+    expect(shouldBypassProxy("127.0.0.1", rules)).toBe(true);
+    expect(shouldBypassProxy("db.internal", rules)).toBe(true);
+    expect(shouldBypassProxy("192.168.1.100", rules)).toBe(true);
+    expect(shouldBypassProxy("myhost", rules)).toBe(true); // <local> rule without dot
+    expect(shouldBypassProxy("external.com", rules)).toBe(false);
+    expect(shouldBypassProxy("8.8.8.8", rules)).toBe(false);
+  });
+
+  it("resolves global proxy and merges authentication credentials", async () => {
+    const { setGlobalProxyConfig, resolveEffectiveProxy } = await import("./session.js");
+    setGlobalProxyConfig({
+      mode: "fixed",
+      url: "http://127.0.0.1:8888",
+      username: "adminUser",
+      password: "secretPassword",
+      bypassRules: "10.0.*",
+    });
+
+    const resBypass = resolveEffectiveProxy("10.0.1.20");
+    expect(resBypass.bypass).toBe(true);
+    expect(resBypass.proxyUrl).toBeUndefined();
+
+    const resProxied = resolveEffectiveProxy("remote.server.com");
+    expect(resProxied.bypass).toBe(false);
+    expect(resProxied.proxyUrl).toBeDefined();
+    expect(resProxied.proxyUrl?.hostname).toBe("127.0.0.1");
+    expect(resProxied.proxyUrl?.port).toBe("8888");
+    expect(decodeURIComponent(resProxied.proxyUrl?.username || "")).toBe("adminUser");
+    expect(decodeURIComponent(resProxied.proxyUrl?.password || "")).toBe("secretPassword");
+
+    // Clean up to direct
+    setGlobalProxyConfig({ mode: "direct", url: undefined, username: undefined, password: undefined });
+  });
+});
+
 // ─── Session lifecycle (in-memory state) ───────────────────────────────────
 
 describe("session lifecycle", () => {

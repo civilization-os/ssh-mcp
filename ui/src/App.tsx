@@ -315,7 +315,6 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState("");
   const [privateKeyInput, setPrivateKeyInput] = useState("");
   const [proxyEnabledInput, setProxyEnabledInput] = useState(false);
-  const [proxyUrlInput, setProxyUrlInput] = useState("");
   const [connectLoading, setConnectLoading] = useState(false);
   const [connectError, setConnectError] = useState("");
   const sessionsListRef = useRef<HTMLDivElement>(null);
@@ -357,7 +356,6 @@ export default function App() {
     setPasswordInput("");
     setPrivateKeyInput("");
     setProxyEnabledInput(false);
-    setProxyUrlInput("");
     setConnectError("");
   };
 
@@ -377,7 +375,6 @@ export default function App() {
     setPasswordInput("");
     setPrivateKeyInput("");
     setProxyEnabledInput(Boolean(session.proxyEnabled));
-    setProxyUrlInput(session.proxyUrl || "");
     setConnectError("");
     setShowCreateModal(true);
   };
@@ -477,7 +474,6 @@ export default function App() {
         port: parseInt(portInput, 10) || 22,
         username: usernameInput,
         proxyEnabled: proxyEnabledInput,
-        proxyUrl: proxyEnabledInput && proxyUrlInput.trim() ? proxyUrlInput.trim() : undefined,
       };
       if (authMethodInput === "password") {
         if (!isEditing || authMethodInput !== initialAuthMethod || passwordInput) {
@@ -1339,23 +1335,40 @@ export default function App() {
               </label>
 
               {proxyEnabledInput && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "4px" }}>
-                  <label style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))" }}>
-                    {t("proxyUrl")}
-                  </label>
-                  <input
-                    type="text"
-                    placeholder={t("proxyUrlPlaceholder")}
-                    value={proxyUrlInput}
-                    onChange={e => setProxyUrlInput(e.target.value)}
-                    className="shadcn-input"
-                    style={{ fontSize: "12px", height: "32px" }}
-                  />
-                  <small style={{ fontSize: "10px", color: "hsl(var(--muted-foreground))", lineHeight: "1.3" }}>
-                    {lang === "zh" 
-                      ? "支持 HTTP (http://host:port) 与 SOCKS5 (socks5://host:port) 代理协议" 
-                      : "Supports HTTP (http://host:port) & SOCKS5 (socks5://host:port) proxies"}
-                  </small>
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "8px 10px",
+                  borderRadius: "6px",
+                  background: "hsl(var(--muted) / 0.4)",
+                  border: "1px dashed hsl(var(--border))",
+                  fontSize: "11px",
+                  color: "hsl(var(--muted-foreground))",
+                  marginTop: "4px",
+                  gap: "8px",
+                }}>
+                  <span style={{ lineHeight: "1.4" }}>{t("proxyEnabledHint")}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCreateModal(false);
+                      window.dispatchEvent(new CustomEvent("open-desktop-settings"));
+                    }}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "hsl(var(--primary))",
+                      fontSize: "11px",
+                      cursor: "pointer",
+                      padding: "2px 4px",
+                      textDecoration: "underline",
+                      whiteSpace: "nowrap",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {t("goToSettings")}
+                  </button>
                 </div>
               )}
             </div>

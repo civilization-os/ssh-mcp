@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import sirv from "sirv";
 import { WebSocketServer, WebSocket, createWebSocketStream } from "ws";
 import type { SFTPWrapper } from "ssh2";
-import { listSessions, disconnectSession, deleteSession, resolveClient } from "./session.js";
+import { listSessions, disconnectSession, deleteSession, resolveClient, setGlobalProxyConfig } from "./session.js";
 import {
   attachWsToShell,
   detachWsFromShell,
@@ -167,6 +167,26 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
           mcpAccessEnabled = payload.enabled;
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ enabled: mcpAccessEnabled }));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Invalid request";
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: message }));
+        }
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/desktop/proxy-config" && req.method === "POST") {
+      let body = "";
+      req.on("data", chunk => {
+        if (body.length < 32 * 1024) body += chunk;
+      });
+      req.on("end", () => {
+        try {
+          const payload = JSON.parse(body);
+          setGlobalProxyConfig(payload);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
         } catch (error) {
           const message = error instanceof Error ? error.message : "Invalid request";
           res.writeHead(400, { "Content-Type": "application/json" });

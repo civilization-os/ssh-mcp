@@ -95,6 +95,12 @@ export function DesktopSettingsControl({ collapsed, lang }: DesktopSettingsContr
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const handleOpen = () => setOpen(true);
+    window.addEventListener("open-desktop-settings", handleOpen);
+    return () => window.removeEventListener("open-desktop-settings", handleOpen);
+  }, []);
+
+  useEffect(() => {
     if (!api) return;
     let disposed = false;
     void Promise.all([api.getSettings(), api.getUpdateState()]).then(([nextSettings, nextUpdate]) => {

@@ -225,6 +225,7 @@ async function setApplicationProxy(value: unknown) {
   proxySettings = next;
   proxyPassword = nextPassword;
   persistSettings();
+  await syncProxyConfigToCore();
   return getApplicationSettings();
 }
 
@@ -377,6 +378,49 @@ async function updateCoreMcpState(enabled: boolean): Promise<void> {
     body: JSON.stringify({ enabled }),
   });
   if (!response.ok) throw new Error(`Core rejected MCP state update (${response.status})`);
+}
+
+async function syncProxyConfigToCore(): Promise<void> {
+  try {
+    let systemProxyUrl: string | undefined;
+    if (proxySettings.mode === "system") {
+      try {
+        const proxyStr = await session.defaultSession.resolveProxy("https://8.8.8.8");
+        if (proxyStr && !proxyStr.startsWith("DIRECT")) {
+          const match = proxyStr.match(/(?:PROXY|SOCKS5|SOCKS)\s+([^;\s]+)/i);
+          if (match) {
+            const proto = proxyStr.toUpperCase().includes("SOCKS") ? "socks5" : "http";
+            systemProxyUrl = `${proto}://${match[1]}`;
+          }
+        }
+      } catch (err) {
+        console.warn("[desktop] Failed to resolve system proxy:", err);
+      }
+    }
+
+    const payload = {
+      mode: proxySettings.mode,
+      url: proxySettings.url,
+      systemProxyUrl,
+      bypassRules: proxySettings.bypassRules,
+      username: proxySettings.username,
+      password: proxyPassword,
+    };
+
+    const response = await fetch(`http://127.0.0.1:${desktopPort}/api/desktop/proxy-config`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${desktopToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      console.warn(`[desktop] Core rejected proxy config update (${response.status})`);
+    }
+  } catch (error) {
+    console.error("[desktop] Failed to sync proxy config to core:", error);
+  }
 }
 
 async function setMcpEnabled(enabled: boolean): Promise<RendererDesktopState> {
@@ -557,6 +601,7 @@ async function bootstrap(): Promise<void> {
 
   startCoreProcess();
   await waitForCoreReady();
+  await syncProxyConfigToCore();
   persistRuntimeState();
   initializeUpdateManager(broadcastUpdateState);
   registerIpcHandlers();

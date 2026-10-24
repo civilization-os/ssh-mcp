@@ -78,9 +78,10 @@ There is no separate hidden execution channel. Commands entered by an agent appe
 
 ### App-level networking and updates
 
-- System proxy, direct connection, or manual HTTP(S)/SOCKS proxy
-- Optional proxy username and password authentication
-- Proxy bypass rules; local MCP traffic and SSH target connections bypass the app proxy
+- Centralized proxy management (System proxy, direct connection, or manual HTTP(S)/SOCKS proxy) in Desktop Settings
+- Secure proxy username and password authentication via OS-level safeStorage
+- Intelligent proxy bypass rules (<local>, CIDR, wildcards)
+- **Zero redundant configuration**: SSH connections require no duplicate proxy URLs; simply toggle "Connect via Proxy" to tunnel through the application proxy
 - In-app GitHub Release checks, download progress, and update installation
 - Optional automatic update checks
 

@@ -329,42 +329,186 @@ export function buildConnectConfig(creds: Partial<SshCredentials>): ConnectConfi
   return config;
 }
 
+export interface GlobalProxyConfig {
+  mode: "direct" | "system" | "fixed";
+  url?: string;
+  systemProxyUrl?: string;
+  bypassRules?: string;
+  username?: string;
+  password?: string;
+}
+
+let globalProxyConfig: GlobalProxyConfig = {
+  mode: "direct",
+};
+
+export function setGlobalProxyConfig(config: Partial<GlobalProxyConfig>): void {
+  globalProxyConfig = {
+    ...globalProxyConfig,
+    ...config,
+  };
+  const activeUrl = globalProxyConfig.url || globalProxyConfig.systemProxyUrl || "none";
+  console.log(`[session] Global proxy config updated: mode=${globalProxyConfig.mode}, url=${activeUrl}, hasAuth=${Boolean(globalProxyConfig.username || globalProxyConfig.password)}`);
+}
+
+export function getGlobalProxyConfig(): GlobalProxyConfig {
+  return { ...globalProxyConfig };
+}
+
+export function shouldBypassProxy(targetHost: string, bypassRulesStr?: string): boolean {
+  if (!bypassRulesStr || !bypassRulesStr.trim()) return false;
+  const host = targetHost.toLowerCase().trim();
+  const rules = bypassRulesStr
+    .split(/[,;\n]/)
+    .map(r => r.trim().toLowerCase())
+    .filter(Boolean);
+
+  for (const rule of rules) {
+    if (rule === "<local>") {
+      if (host === "localhost" || host.startsWith("127.") || host === "::1" || !host.includes(".")) {
+        return true;
+      }
+      continue;
+    }
+    if (rule === "*") return true;
+    if (rule === host) return true;
+    if (rule.startsWith("*.")) {
+      const suffix = rule.slice(2);
+      if (host === suffix || host.endsWith("." + suffix)) return true;
+    } else if (rule.startsWith(".")) {
+      const suffix = rule.slice(1);
+      if (host === suffix || host.endsWith("." + suffix)) return true;
+    } else if (rule.endsWith("*")) {
+      const prefix = rule.slice(0, -1);
+      if (host.startsWith(prefix)) return true;
+    }
+  }
+  return false;
+}
+
+export interface EffectiveProxyResult {
+  bypass: boolean;
+  proxyUrl?: URL;
+  error?: string;
+}
+
+export function resolveEffectiveProxy(targetHost: string): EffectiveProxyResult {
+  const cfg = globalProxyConfig;
+
+  let mode = cfg.mode;
+  let rawUrl = cfg.url;
+  let bypassRules = cfg.bypassRules;
+  let username = cfg.username;
+  let password = cfg.password;
+
+  // Fallback if core was not started via Desktop or not yet synchronized
+  if (mode === "direct" && !rawUrl) {
+    try {
+      const desktopSettingsPath = path.join(DATA_DIRECTORY, "settings.json");
+      if (fs.existsSync(desktopSettingsPath)) {
+        const parsed = JSON.parse(fs.readFileSync(desktopSettingsPath, "utf-8"));
+        if (parsed?.proxy) {
+          mode = parsed.proxy.mode || "direct";
+          if (parsed.proxy.mode === "fixed" && parsed.proxy.url) {
+            rawUrl = parsed.proxy.url;
+          }
+          if (parsed.proxy.bypassRules) {
+            bypassRules = parsed.proxy.bypassRules;
+          }
+          if (parsed.proxy.username) {
+            username = parsed.proxy.username;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Check bypass rules
+  if (shouldBypassProxy(targetHost, bypassRules)) {
+    console.log(`[session] Target "${targetHost}" matches proxy bypass rules ("${bypassRules}"), connecting directly.`);
+    return { bypass: true };
+  }
+
+  let finalProxyUrlStr: string | undefined;
+
+  if (mode === "system") {
+    finalProxyUrlStr = cfg.systemProxyUrl;
+    if (!finalProxyUrlStr) {
+      finalProxyUrlStr = process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    }
+    if (!finalProxyUrlStr) {
+      return {
+        bypass: false,
+        error: "Proxy is set to 'system' in Desktop Settings, but no system proxy could be detected.",
+      };
+    }
+  } else if (mode === "fixed") {
+    finalProxyUrlStr = rawUrl;
+  } else {
+    // Mode is direct, check environment variable fallback
+    const envProxy = process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    if (envProxy) {
+      finalProxyUrlStr = envProxy;
+    } else {
+      return {
+        bypass: false,
+        error: "Proxy is enabled for this session, but no proxy URL is configured (Desktop Settings mode is Direct or unset).",
+      };
+    }
+  }
+
+  if (!finalProxyUrlStr || !finalProxyUrlStr.trim()) {
+    return {
+      bypass: false,
+      error: "Proxy is enabled for this session, but no proxy URL is configured in Desktop Settings.",
+    };
+  }
+
+  try {
+    let urlString = finalProxyUrlStr.trim();
+    if (!urlString.includes("://")) {
+      urlString = `http://${urlString}`;
+    }
+    const parsedUrl = new URL(urlString);
+    if (username && !parsedUrl.username) {
+      parsedUrl.username = encodeURIComponent(username);
+    }
+    if (password && !parsedUrl.password) {
+      parsedUrl.password = encodeURIComponent(password);
+    }
+    return { bypass: false, proxyUrl: parsedUrl };
+  } catch (err: any) {
+    return {
+      bypass: false,
+      error: `Invalid proxy URL "${finalProxyUrlStr}": ${err.message}`,
+    };
+  }
+}
+
 export function getEffectiveProxyUrl(customProxyUrl?: string): string | undefined {
   const custom = normalizeOptionalString(customProxyUrl);
   if (custom) return custom;
-
-  // Try reading from Desktop application settings (settings.json in DATA_DIRECTORY)
-  try {
-    const desktopSettingsPath = path.join(DATA_DIRECTORY, "settings.json");
-    if (fs.existsSync(desktopSettingsPath)) {
-      const content = fs.readFileSync(desktopSettingsPath, "utf-8");
-      const parsed = JSON.parse(content);
-      if (parsed?.proxy?.mode === "fixed" && parsed.proxy.url) {
-        return String(parsed.proxy.url).trim();
-      }
-    }
-  } catch {}
-
-  // Fallback to standard environment variables
-  const envProxy = process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  if (envProxy && envProxy.trim()) {
-    return envProxy.trim();
-  }
-
-  return undefined;
+  const res = resolveEffectiveProxy("example.com");
+  return res.proxyUrl?.toString();
 }
 
 export async function createProxySocket(
-  proxyUrlString: string,
+  proxyTarget: string | URL,
   targetHost: string,
   targetPort: number,
   timeoutMs: number = 10000,
 ): Promise<net.Socket> {
   let proxyUrl: URL;
-  try {
-    proxyUrl = new URL(proxyUrlString);
-  } catch (err: any) {
-    throw new Error(`Invalid proxy URL "${proxyUrlString}": ${err.message}`);
+  if (typeof proxyTarget === "string") {
+    let s = proxyTarget.trim();
+    if (!s.includes("://")) s = `http://${s}`;
+    try {
+      proxyUrl = new URL(s);
+    } catch (err: any) {
+      throw new Error(`Invalid proxy URL "${proxyTarget}": ${err.message}`);
+    }
+  } else {
+    proxyUrl = proxyTarget;
   }
 
   const protocol = proxyUrl.protocol.replace(/:$/, "").toLowerCase();
@@ -643,12 +787,18 @@ export async function sshConnect(creds: Partial<SshCredentials>, timeoutMs: numb
   let proxySocket: net.Socket | undefined;
 
   if (creds.proxyEnabled) {
-    const proxyUrl = getEffectiveProxyUrl(creds.proxyUrl);
-    if (!proxyUrl) {
-      throw new Error(`Proxy is enabled for this session, but no proxy URL is configured (neither in session nor in application settings).`);
+    const targetHost = creds.host ?? "localhost";
+    const targetPort = creds.port ?? 22;
+    const resolved = resolveEffectiveProxy(targetHost);
+
+    if (resolved.error) {
+      throw new Error(resolved.error);
     }
-    proxySocket = await createProxySocket(proxyUrl, creds.host ?? "localhost", creds.port ?? 22, timeoutMs);
-    config.sock = proxySocket;
+
+    if (!resolved.bypass && resolved.proxyUrl) {
+      proxySocket = await createProxySocket(resolved.proxyUrl, targetHost, targetPort, timeoutMs);
+      config.sock = proxySocket;
+    }
   }
 
   return new Promise((resolve, reject) => {
