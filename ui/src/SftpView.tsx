@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { translations } from "./i18n";
 import type { Language } from "./i18n";
 import {
@@ -647,19 +648,29 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
       </div>
 
       {/* Batch Actions Bar (Visible when items selected) */}
-      {selectedNames.size > 0 && (
-        <div className="shadcn-card" style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "6px 14px",
-          borderRadius: "6px",
-          marginTop: "6px",
-          background: "rgba(15, 118, 110, 0.15)",
-          border: "1px solid rgba(20, 184, 166, 0.4)",
-          fontSize: "12px",
-          color: "#2dd4bf"
-        }}>
+      <AnimatePresence>
+        {selectedNames.size > 0 && (
+          <motion.div
+            className="shadcn-card"
+            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            transition={{ duration: 0.18 }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "6px 14px",
+              borderRadius: "6px",
+              marginTop: "6px",
+              background: "rgba(15, 118, 110, 0.18)",
+              backdropFilter: "blur(4px)",
+              border: "1px solid rgba(45, 212, 191, 0.45)",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+              fontSize: "12px",
+              color: "#2dd4bf"
+            }}
+          >
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <CheckSquare size={14} />
             <span>{t("sftpSelectedCount")}: <strong>{selectedNames.size}</strong></span>
@@ -689,31 +700,46 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
               {t("sftpClearSelection")}
             </button>
           </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Conflict Modal */}
-      {conflictFiles && (
-        <div style={{
-          position: "fixed",
-          inset: 0,
-          zIndex: 60,
-          background: "rgba(0,0,0,0.65)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "20px"
-        }}>
-          <div className="shadcn-card" style={{
-            width: "440px",
-            maxWidth: "100%",
-            padding: "20px",
-            borderRadius: "10px",
-            background: "#131e29",
-            border: "1px solid #2dd4bf",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.5)"
-          }}>
+      <AnimatePresence>
+        {conflictFiles && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.16 }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 60,
+              background: "rgba(0,0,0,0.72)",
+              backdropFilter: "blur(6px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "20px"
+            }}
+          >
+            <motion.div
+              className="shadcn-card"
+              initial={{ opacity: 0, scale: 0.94, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              transition={{ type: "spring", damping: 25, stiffness: 350 }}
+              style={{
+                width: "440px",
+                maxWidth: "100%",
+                padding: "22px",
+                borderRadius: "10px",
+                background: "#131e29",
+                border: "1px solid rgba(45, 212, 191, 0.6)",
+                boxShadow: "0 24px 48px -12px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(45, 212, 191, 0.2)"
+              }}
+            >
             <h3 style={{ margin: "0 0 10px", fontSize: "15px", color: "#f8fafc", display: "flex", alignItems: "center", gap: "8px" }}>
               <AlertCircle size={18} style={{ color: "#f59e0b" }} />
               {t("sftpConflictTitle")}
@@ -767,9 +793,10 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
                 {t("sftpOverwrite")}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Mkdir inline input */}
       {mkdirMode && (
@@ -1009,22 +1036,29 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
       </div>
 
       {/* Floating Transfer Queue Drawer */}
-      {transfers.length > 0 && (
-        <div style={{
-          position: "absolute",
-          right: "16px",
-          bottom: "16px",
-          width: "380px",
-          maxWidth: "calc(100% - 32px)",
-          zIndex: 50,
-          borderRadius: "8px",
-          background: "#101923",
-          border: "1px solid #243342",
-          boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden"
-        }}>
+      <AnimatePresence>
+        {transfers.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.96 }}
+            transition={{ type: "spring", damping: 26, stiffness: 360 }}
+            style={{
+              position: "absolute",
+              right: "16px",
+              bottom: "16px",
+              width: "380px",
+              maxWidth: "calc(100% - 32px)",
+              zIndex: 50,
+              borderRadius: "8px",
+              background: "#101923",
+              border: "1px solid #243342",
+              boxShadow: "0 12px 32px -4px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06)",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden"
+            }}
+          >
           {/* Drawer Header */}
           <div style={{
             padding: "8px 12px",
@@ -1133,8 +1167,9 @@ export function SftpView({ sessionId, lang, onOpenFile }: SftpViewProps & { onOp
               ))}
             </div>
           )}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

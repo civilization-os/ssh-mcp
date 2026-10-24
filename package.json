@@ -1,6 +1,6 @@
 {
   "name": "ssh-mcp",
-  "version": "2.5.8",
+  "version": "2.5.9",
   "description": "Desktop-controlled MCP runtime for human-supervised SSH operations",
   "author": "civilization-os contributors",
   "type": "module",

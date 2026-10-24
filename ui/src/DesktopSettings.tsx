@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "motion/react";
 import { CheckCircle2, Download, Globe2, RefreshCw, RotateCcw, Settings, X } from "lucide-react";
 import type { Language } from "./i18n";
 
@@ -157,11 +158,30 @@ export function DesktopSettingsControl({ collapsed, lang }: DesktopSettingsContr
         </button>
       </div>
 
-      {open && createPortal(
-        <div className="desktop-settings-backdrop" role="presentation" onMouseDown={event => {
-          if (event.currentTarget === event.target) setOpen(false);
-        }}>
-          <section className="desktop-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="desktop-settings-title">
+      {createPortal(
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              className="desktop-settings-backdrop"
+              role="presentation"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              onMouseDown={event => {
+                if (event.currentTarget === event.target) setOpen(false);
+              }}
+            >
+              <motion.section
+                className="desktop-settings-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="desktop-settings-title"
+                initial={{ opacity: 0, scale: 0.95, y: 14 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 10 }}
+                transition={{ type: "spring", damping: 26, stiffness: 360 }}
+              >
             <header>
               <div className="desktop-settings-heading">
                 <span><Settings size={18} /></span>
@@ -346,8 +366,10 @@ export function DesktopSettingsControl({ collapsed, lang }: DesktopSettingsContr
 
               {error && <div className="desktop-settings-error" role="alert">{error}</div>}
             </div>
-          </section>
-        </div>,
+              </motion.section>
+            </motion.div>
+          )}
+        </AnimatePresence>,
         document.body,
       )}
     </>

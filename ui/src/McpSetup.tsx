@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "motion/react";
 import { Bot, Check, Clipboard, Code2, ExternalLink, PlugZap, ShieldCheck, X } from "lucide-react";
 import type { Language } from "./i18n";
 
@@ -85,11 +86,30 @@ export function McpSetupControl({ collapsed, lang }: { collapsed: boolean; lang:
         </button>
       </div>
 
-      {open && createPortal(
-        <div className="mcp-setup-backdrop" role="presentation" onMouseDown={event => {
-          if (event.currentTarget === event.target) setOpen(false);
-        }}>
-          <section className="mcp-setup-dialog" role="dialog" aria-modal="true" aria-labelledby="mcp-setup-title">
+      {createPortal(
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              className="mcp-setup-backdrop"
+              role="presentation"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              onMouseDown={event => {
+                if (event.currentTarget === event.target) setOpen(false);
+              }}
+            >
+              <motion.section
+                className="mcp-setup-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="mcp-setup-title"
+                initial={{ opacity: 0, scale: 0.95, y: 14 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 10 }}
+                transition={{ type: "spring", damping: 26, stiffness: 360 }}
+              >
             <header>
               <div className="mcp-setup-heading">
                 <span><Bot size={21} /></span>
@@ -162,8 +182,10 @@ export function McpSetupControl({ collapsed, lang }: { collapsed: boolean; lang:
                 </a>
               </main>
             </div>
-          </section>
-        </div>,
+              </motion.section>
+            </motion.div>
+          )}
+        </AnimatePresence>,
         document.body,
       )}
     </>

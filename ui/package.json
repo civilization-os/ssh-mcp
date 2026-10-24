@@ -13,6 +13,7 @@
     "@monaco-editor/react": "^4.7.0",
     "allotment": "^1.20.5",
     "lucide-react": "^1.25.0",
+    "motion": "^14.6.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "recharts": "^3.9.2",

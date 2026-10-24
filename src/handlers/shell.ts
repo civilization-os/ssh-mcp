@@ -469,7 +469,7 @@ async function executeShellRead(shell: ShellSession, args: SshShellReadArgs): Pr
     bufferSize: shell.buffer.length,
     unreadSize: output.length,
     truncated: truncated || programOutputTruncated,
-    content: text || "(no visible terminal changes)",
+    content: (args.includeEcho ? text : programText) || "(no visible terminal changes)",
     programOutput: programText,
   };
 

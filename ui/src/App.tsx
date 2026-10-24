@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { EditorView } from "./EditorView";
@@ -202,7 +203,10 @@ function SessionItem({
   pingMs?: number | null;
 }) {
   return (
-    <div
+    <motion.div
+      layout
+      whileHover={{ y: -1, transition: { duration: 0.15 } }}
+      whileTap={{ scale: 0.988 }}
       onClick={onSelect}
       className={`session-card ${isSelected ? "is-selected" : ""}`}
     >
@@ -234,7 +238,7 @@ function SessionItem({
         </span>
         <em>{sess.authType === "privateKey" ? (lang === "zh" ? "KEY" : "KEY") : (lang === "zh" ? "PWD" : "PWD")}</em>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -677,12 +681,27 @@ export default function App() {
                     whiteSpace: "nowrap"
                   }}
                 >
+                  {isActive && (
+                    <motion.div
+                      layoutId="activeRailTabIndicator"
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        borderRadius: "6px",
+                        background: "hsl(var(--accent))",
+                        zIndex: 0,
+                      }}
+                      transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                    />
+                  )}
                   <div style={{ 
                     display: "flex", 
                     alignItems: "center", 
                     justifyContent: "center",
                     width: "16px",
                     flexShrink: 0,
+                    position: "relative",
+                    zIndex: 1,
                   }}>
                     {tab.icon}
                   </div>
@@ -945,120 +964,148 @@ export default function App() {
       </div>
 
       {/* ===== Confirm Delete Modal ===== */}
-      {confirmTarget && (
-        <div 
-          onClick={(e) => { if (e.target === e.currentTarget) setConfirmTarget(null); }}
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            width: "100vw",
-            height: "100vh",
-            background: "rgba(0,0,0,0.75)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1100,
-          }}
-        >
-          <div className="shadcn-card" style={{
-            width: "420px",
-            padding: "24px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "16px",
-          }}>
-            {/* Icon + Title */}
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <div style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "50%",
-                background: "hsl(var(--destructive) / 0.1)",
-                border: "1px solid hsl(var(--destructive) / 0.3)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "18px",
-                flexShrink: 0,
-              }}>⚠️</div>
-              <div>
-                <div style={{ fontSize: "16px", fontWeight: 600, color: "hsl(var(--foreground))" }}>
-                  {t("confirmDeleteTitle")}
-                </div>
-                <div style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>
-                  {t("confirmDeleteHint")}
-                </div>
-              </div>
-            </div>
-
-            {/* Session name highlight */}
-            <div className="shadcn-card" style={{
-              background: "hsl(var(--destructive) / 0.05)",
-              borderColor: "hsl(var(--destructive) / 0.2)",
-              padding: "10px 14px",
+      <AnimatePresence>
+        {confirmTarget && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.16 }}
+            onClick={(e) => { if (e.target === e.currentTarget) setConfirmTarget(null); }}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              width: "100vw",
+              height: "100vh",
+              background: "rgba(0,0,0,0.75)",
+              backdropFilter: "blur(6px)",
               display: "flex",
               alignItems: "center",
-              gap: "8px",
-            }}>
-              <span style={{ fontSize: "16px" }}>🖥️</span>
-              <div>
-                <div style={{ fontSize: "13px", fontWeight: 600, color: "hsl(var(--foreground))" }}>
-                  {confirmTarget.label}
-                </div>
-                <div style={{ fontSize: "10px", color: "hsl(var(--muted-foreground))", marginTop: "2px" }}>
-                  ID: {confirmTarget.id}
+              justifyContent: "center",
+              zIndex: 1100,
+            }}
+          >
+            <motion.div 
+              className="shadcn-card"
+              initial={{ opacity: 0, scale: 0.94, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              transition={{ type: "spring", damping: 25, stiffness: 350 }}
+              style={{
+                width: "420px",
+                padding: "24px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "16px",
+                boxShadow: "0 24px 48px -12px rgba(0, 0, 0, 0.65), 0 0 0 1px hsl(var(--border))",
+              }}
+            >
+              {/* Icon + Title */}
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <div style={{
+                  width: "40px",
+                  height: "40px",
+                  borderRadius: "50%",
+                  background: "hsl(var(--destructive) / 0.1)",
+                  border: "1px solid hsl(var(--destructive) / 0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "18px",
+                  flexShrink: 0,
+                }}>⚠️</div>
+                <div>
+                  <div style={{ fontSize: "16px", fontWeight: 600, color: "hsl(var(--foreground))" }}>
+                    {t("confirmDeleteTitle")}
+                  </div>
+                  <div style={{ fontSize: "12px", color: "hsl(var(--muted-foreground))" }}>
+                    {t("confirmDeleteHint")}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Buttons */}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-              <button
-                onClick={() => setConfirmTarget(null)}
-                className="shadcn-btn shadcn-btn-outline"
-                style={{ padding: "8px 16px" }}
-              >
-                {t("cancelBtn")}
-              </button>
-              <button
-                onClick={handleConfirmDelete}
-                className="shadcn-btn shadcn-btn-destructive"
-                style={{ padding: "8px 18px" }}
-              >
-                {t("confirmDeleteBtn")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              {/* Session name highlight */}
+              <div className="shadcn-card" style={{
+                background: "hsl(var(--destructive) / 0.05)",
+                borderColor: "hsl(var(--destructive) / 0.2)",
+                padding: "10px 14px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}>
+                <span style={{ fontSize: "16px" }}>🖥️</span>
+                <div>
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: "hsl(var(--foreground))" }}>
+                    {confirmTarget.label}
+                  </div>
+                  <div style={{ fontSize: "10px", color: "hsl(var(--muted-foreground))", marginTop: "2px" }}>
+                    ID: {confirmTarget.id}
+                  </div>
+                </div>
+              </div>
+
+              {/* Buttons */}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                <button
+                  onClick={() => setConfirmTarget(null)}
+                  className="shadcn-btn shadcn-btn-outline"
+                  style={{ padding: "8px 16px" }}
+                >
+                  {t("cancelBtn")}
+                </button>
+                <button
+                  onClick={handleConfirmDelete}
+                  className="shadcn-btn shadcn-btn-destructive"
+                  style={{ padding: "8px 18px" }}
+                >
+                  {t("confirmDeleteBtn")}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Create / Edit Connection Modal */}
-      {showCreateModal && (
-        <div 
-          onClick={(e) => { if (e.target === e.currentTarget) { setShowCreateModal(false); resetSessionForm(); } }}
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            width: "100vw",
-            height: "100vh",
-            background: "rgba(0,0,0,0.75)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-        >
-          <form onSubmit={handleConnect} className="shadcn-card" style={{
-            width: "480px",
-            padding: "24px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "16px",
-          }}>
+      <AnimatePresence>
+        {showCreateModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            onClick={(e) => { if (e.target === e.currentTarget) { setShowCreateModal(false); resetSessionForm(); } }}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              width: "100vw",
+              height: "100vh",
+              background: "rgba(0,0,0,0.75)",
+              backdropFilter: "blur(6px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+            }}
+          >
+            <motion.form
+              onSubmit={handleConnect}
+              className="shadcn-card"
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              transition={{ type: "spring", damping: 26, stiffness: 360 }}
+              style={{
+                width: "480px",
+                padding: "24px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "16px",
+                boxShadow: "0 24px 48px -12px rgba(0, 0, 0, 0.65), 0 0 0 1px hsl(var(--border))",
+              }}
+            >
             <h3 style={{ fontSize: "16px", fontWeight: 600, margin: 0, color: "hsl(var(--foreground))" }}>
               {editingSessionId ? t("editSession") : t("connectNewSession")}
             </h3>
@@ -1215,9 +1262,10 @@ export default function App() {
                 {connectLoading ? t("connecting") : editingSessionId ? t("saveSession") : t("connectBtn")}
               </button>
             </div>
-          </form>
-        </div>
-      )}
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
       </div>
     </>
   );

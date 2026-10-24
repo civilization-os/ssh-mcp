@@ -392,18 +392,18 @@ const TOOL_CATALOG = [
     },
     {
       name: "ssh_shell_write",
-      description: "Write input to an interactive shell.\n\n【常用速查】\n  {input: \"ls -la\"}                 → 执行命令并自动在末尾换行\n  {inputBase64: \"...\", waitMs: 500} → 免转义脚本输入（无惧awk/引号/$），并直接返回执行输出！\n  {input: \"npm i\", expect: \"EXIT=\"}  → 发送命令并等待完成，一步到位（省去额外一次 read 调用）\n\n特性：\n1. 省略 shellId 时自动使用最近活跃 shell；\n2. inputBase64：输入 Base64 字符串，工具端精确解码，彻底避免 JSON/Bash 多层引号与反斜杠转义破坏；\n3. 复合模式：传入 waitMs 或 expect 时，写完后自动等待并直接返回执行输出，将交互往返减半；\n4. raw: true 禁用末尾自动追加换行（用于交互按键如 Ctrl+C、密码输入等）。",
+      description: "Write input to an interactive shell.\n\n【常用速查】：\n  {input: \"ls -la\"}                 → 写入命令并自动执行\n  {input: \"npm i\", expect: \"DONE\"}  → 发送命令并等待完成，一步到位（单次往返替代 write + read）\n  {input: \"cat /log\", waitMs: 500}   → 写入后等待静默 500ms 直接返回输出\n  {inputBase64: \"...\", waitMs: 500} → 免转义脚本输入（无惧awk/引号/$）\n\n特性：\n1. 省略 shellId 时自动使用最近活跃 shell；\n2. 复合模式：传入 expect 或 waitMs 时，写完后自动等待命令结束并直接返回执行输出，无需再调用 read；\n3. inputBase64：输入 Base64 字符串，工具端精确解码，彻底避免 JSON/Bash 多层引号与反斜杠转义破坏；\n4. raw: true 禁用末尾自动追加换行（用于交互按键如 Ctrl+C、密码输入等）。",
       inputSchema: {
         type: "object",
         properties: {
           shellId: { type: "string", description: "Shell ID from ssh_shell (optional: defaults to the most recent active shell)" },
           input: { type: "string", description: "Text/command to write to shell stdin (auto appends newline if missing unless raw=true)" },
-          inputBase64: { type: "string", description: "Base64 encoded input. Recommended for complex scripts, awk, quotes, and multiline commands to bypass escape issues completely." },
-          raw: { type: "boolean", description: "If true, bypass auto-newline appending (default: false)" },
-          waitMs: { type: "number", description: "Wait for N ms of silence after writing and directly return output (composite write+read mode)" },
-          expect: { type: "string", description: "Wait until this regex pattern appears in output after writing, then return output directly" },
+          expect: { type: "string", description: "Wait until this regex pattern appears in output after writing, then return output directly (composite write+read mode)" },
+          waitMs: { type: "number", description: "Wait for N ms of silence after writing and directly return output" },
           maxWaitMs: { type: "number", description: "Maximum time in ms to wait when expect/waitMs is used (default: 30000 with expect)" },
           tailLines: { type: "number", description: "Only return the last N lines of output when waiting" },
+          inputBase64: { type: "string", description: "Base64 encoded input. Recommended for complex scripts, awk, quotes, and multiline commands to bypass escape issues completely." },
+          raw: { type: "boolean", description: "If true, bypass auto-newline appending (default: false)" },
           includeScreen: { type: "boolean", description: "Include full terminal screen snapshot in the returned output (default: false)" },
           includeEcho: { type: "boolean", description: "Include echoed input command lines in output (default: false)" },
         },
@@ -411,7 +411,7 @@ const TOOL_CATALOG = [
     },
     {
       name: "ssh_shell_read",
-      description: "Read output from an interactive shell as a rendered terminal.\n\n【常用速查】\n  {shellId}                  → 读增量输出（默认精简返回，极大节省 Token 防止中段截断）\n  {shellId, expect:\"EXIT=\"}  → 等待命令结束或特定标记（替代手动 sleep 轮询）\n  {shellId, waitMs:500}      → 等待输出静默 500ms 后返回\n  {shellId, tailLines:20}    → 仅读最后 20 行，节省上下文\n  {shellId, peek:true}       → 查看整屏历史与快照（不推进增量游标）\n\n特性：\n1. 省略 shellId 时自动使用最近活跃 shell；\n2. 默认返回精简结构（仅包含 output/programOutput、promptShown、unreadSize），默认不返回几十行 screen 与重复的 inputEcho，体积减少 70%+；\n3. 如需查看整屏全量视图，请传 includeScreen: true 或 peek: true。",
+      description: "Read output from an interactive shell as a rendered terminal.\n\n【常用速查】：\n  {shellId}                     → 读增量（默认精简）\n  {shellId, expect:\"DONE\"}      → 等命令结束，替代 sleep 轮询\n  {shellId, tailLines:20}       → 限行省 token\n  {shellId, peek:true}          → 看整屏（含 screen/cursor）\n\n特性：\n1. 省略 shellId 时自动使用最近活跃 shell；\n2. 默认返回精简结构（output/content 均为净输出，已剥离长命令自身回显），默认不返回几十行 screen 与重复的 inputEcho，体积减少 70%+ 防止中段截断；\n3. 如需查看整屏全量视图，请传 includeScreen: true 或 peek: true。",
       inputSchema: {
         type: "object",
         properties: {
