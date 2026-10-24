@@ -298,7 +298,9 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
             label: session.label,
             host: session.host,
             port: session.port,
-            username: session.username
+            username: session.username,
+            proxyEnabled: session.proxyEnabled,
+            proxyUrl: session.proxyUrl,
           }));
         } catch (err: any) {
           res.writeHead(400, { "Content-Type": "text/plain" });
@@ -326,7 +328,9 @@ export async function startHttpServer(initialPort: number = 12222): Promise<Http
             label: session.label,
             host: session.host,
             port: session.port,
-            username: session.username
+            username: session.username,
+            proxyEnabled: session.proxyEnabled,
+            proxyUrl: session.proxyUrl,
           }));
         } catch (err: any) {
           res.writeHead(400, { "Content-Type": "text/plain" });

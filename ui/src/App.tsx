@@ -14,7 +14,7 @@ import { McpSetupControl } from "./McpSetup";
 import {
   Activity, ChevronLeft, ChevronRight, FileText, Pencil, Plus, Server,
   ShieldCheck, TerminalSquare, Trash2, Key, Lock, X, Check, Copy,
-  RotateCcw, Maximize2, Minimize2, Sparkles, CornerDownLeft
+  RotateCcw, Maximize2, Minimize2, Sparkles, CornerDownLeft, Globe
 } from "lucide-react";
 
 interface SshSession {
@@ -30,6 +30,8 @@ interface SshSession {
   hasPassword?: boolean;
   hasPrivateKey?: boolean;
   connected?: boolean;
+  proxyEnabled?: boolean;
+  proxyUrl?: string;
 }
 
 interface ShellSession {
@@ -47,6 +49,8 @@ interface SessionPayload {
   username: string;
   password?: string;
   privateKey?: string;
+  proxyEnabled?: boolean;
+  proxyUrl?: string;
 }
 
 
@@ -236,7 +240,31 @@ function SessionItem({
         <span>
           {sess.connected ? translations[lang].heartbeatActive + (pingMs != null ? ` (${pingMs}ms)` : "") : (lang === "zh" ? "已断开" : "Disconnected")}
         </span>
-        <em>{sess.authType === "privateKey" ? (lang === "zh" ? "KEY" : "KEY") : (lang === "zh" ? "PWD" : "PWD")}</em>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "5px" }}>
+          {sess.proxyEnabled && (
+            <span
+              className="session-proxy-tag"
+              title={sess.proxyUrl ? `Proxy: ${sess.proxyUrl}` : (lang === "zh" ? "通过全局代理连接" : "Connected via global proxy")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "3px",
+                fontSize: "10px",
+                fontWeight: 700,
+                padding: "1px 5px",
+                borderRadius: "4px",
+                background: "hsl(var(--primary) / 0.15)",
+                color: "hsl(var(--primary))",
+                border: "1px solid hsl(var(--primary) / 0.3)",
+                lineHeight: "14px",
+              }}
+            >
+              <Globe size={10} />
+              {translations[lang].proxyBadge}
+            </span>
+          )}
+          <em>{sess.authType === "privateKey" ? "KEY" : "PWD"}</em>
+        </div>
       </div>
     </motion.div>
   );
@@ -272,6 +300,8 @@ export default function App() {
   const [authMethodInput, setAuthMethodInput] = useState<"password" | "privateKey">("password");
   const [passwordInput, setPasswordInput] = useState("");
   const [privateKeyInput, setPrivateKeyInput] = useState("");
+  const [proxyEnabledInput, setProxyEnabledInput] = useState(false);
+  const [proxyUrlInput, setProxyUrlInput] = useState("");
   const [connectLoading, setConnectLoading] = useState(false);
   const [connectError, setConnectError] = useState("");
 
@@ -296,6 +326,8 @@ export default function App() {
     setAuthMethodInput("password");
     setPasswordInput("");
     setPrivateKeyInput("");
+    setProxyEnabledInput(false);
+    setProxyUrlInput("");
     setConnectError("");
   };
 
@@ -314,6 +346,8 @@ export default function App() {
     setAuthMethodInput(session.authType === "privateKey" ? "privateKey" : "password");
     setPasswordInput("");
     setPrivateKeyInput("");
+    setProxyEnabledInput(Boolean(session.proxyEnabled));
+    setProxyUrlInput(session.proxyUrl || "");
     setConnectError("");
     setShowCreateModal(true);
   };
@@ -412,6 +446,8 @@ export default function App() {
         host: hostInput,
         port: parseInt(portInput, 10) || 22,
         username: usernameInput,
+        proxyEnabled: proxyEnabledInput,
+        proxyUrl: proxyEnabledInput && proxyUrlInput.trim() ? proxyUrlInput.trim() : undefined,
       };
       if (authMethodInput === "password") {
         if (!isEditing || authMethodInput !== initialAuthMethod || passwordInput) {
@@ -770,16 +806,7 @@ export default function App() {
                     setActiveShellId("");
                   }
                 }}
-                onEdit={() => {
-                  setEditingSessionId(sess.id);
-                  setSessionNameInput(sess.label);
-                  setHostInput(sess.host);
-                  setPortInput(String(sess.port));
-                  setUsernameInput(sess.username);
-                  setInitialAuthMethod(sess.authType || "password");
-                  setAuthMethodInput(sess.authType || "password");
-                  setShowCreateModal(true);
-                }}
+                onEdit={() => openEditModal(sess)}
                 onDelete={() => setConfirmTarget({ id: sess.id, label: sess.label })}
               />
             ))
@@ -1243,6 +1270,65 @@ export default function App() {
                 )}
               </div>
             )}
+
+            {/* Proxy Setting Toggle */}
+            <div style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+              padding: "10px 12px",
+              borderRadius: "8px",
+              background: "hsl(var(--secondary) / 0.5)",
+              border: "1px solid hsl(var(--border) / 0.6)",
+            }}>
+              <label style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                cursor: "pointer",
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "hsl(var(--foreground))",
+                userSelect: "none",
+              }}>
+                <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <Globe size={14} style={{ color: proxyEnabledInput ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))" }} />
+                  {t("useProxy")}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={proxyEnabledInput}
+                  onChange={e => setProxyEnabledInput(e.target.checked)}
+                  style={{
+                    cursor: "pointer",
+                    width: "16px",
+                    height: "16px",
+                    accentColor: "hsl(var(--primary))",
+                  }}
+                />
+              </label>
+
+              {proxyEnabledInput && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "4px" }}>
+                  <label style={{ fontSize: "11px", color: "hsl(var(--muted-foreground))" }}>
+                    {t("proxyUrl")}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={t("proxyUrlPlaceholder")}
+                    value={proxyUrlInput}
+                    onChange={e => setProxyUrlInput(e.target.value)}
+                    className="shadcn-input"
+                    style={{ fontSize: "12px", height: "32px" }}
+                  />
+                  <small style={{ fontSize: "10px", color: "hsl(var(--muted-foreground))", lineHeight: "1.3" }}>
+                    {lang === "zh" 
+                      ? "支持 HTTP (http://host:port) 与 SOCKS5 (socks5://host:port) 代理协议" 
+                      : "Supports HTTP (http://host:port) & SOCKS5 (socks5://host:port) proxies"}
+                  </small>
+                </div>
+              )}
+            </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
               <button

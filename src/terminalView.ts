@@ -21,7 +21,8 @@ export interface SeparatedTerminalOutput {
 }
 
 function looksLikeShellPromptPrefix(value: string): boolean {
-  return /[$#>%❯➜λ]$/.test(value.trimEnd());
+  const trimmed = value.trimEnd();
+  return /[$#>%❯➜λ:~\]\)\@]$/.test(trimmed) || /[@:][^/\\:*?"<>|]+[$#>\s]$/.test(trimmed);
 }
 
 export class TerminalView {
@@ -136,16 +137,19 @@ export function separateInputEcho(
     .filter(candidate => candidate.length > 0 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(candidate));
 
   let searchFrom = 0;
-  const searchLimit = Math.min(programLines.length, candidates.length + 2);
+  const searchLimit = Math.min(programLines.length, candidates.length + 3);
   for (const [candidateIndex, candidate] of candidates.entries()) {
+    const trimmedCandidate = candidate.trimEnd();
     for (let lineIndex = searchFrom; lineIndex < searchLimit; lineIndex += 1) {
       const line = programLines[lineIndex];
-      const echoStart = line.lastIndexOf(candidate);
-      if (echoStart === -1 || echoStart + candidate.length !== line.length) continue;
-      const observedPrefix = line.slice(0, echoStart);
+      const trimmedLine = line.trimEnd();
+      const echoStart = trimmedLine.lastIndexOf(trimmedCandidate);
+      if (echoStart === -1 || echoStart + trimmedCandidate.length !== trimmedLine.length) continue;
+      const observedPrefix = trimmedLine.slice(0, echoStart);
       if (
         candidateIndex === 0 &&
         inputEchoPrefix !== undefined &&
+        inputEchoPrefix !== "" &&
         observedPrefix.trimEnd() !== inputEchoPrefix.trimEnd() &&
         !looksLikeShellPromptPrefix(observedPrefix)
       ) continue;

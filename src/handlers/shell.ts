@@ -33,7 +33,33 @@ interface ShellSession {
 
 function getProgramOutputSinceWrite(shell: ShellSession): string[] {
   const visibleLines = semanticDelta(shell.semanticBaseline, shell.terminalView.snapshot().historyLines);
-  return separateInputEcho(visibleLines, shell.lastInput, shell.lastInputEchoPrefix).programLines;
+  const separated = separateInputEcho(visibleLines, shell.lastInput, shell.lastInputEchoPrefix);
+
+  // Extra defense-in-depth:
+  // Ensure that no leading line that matches or ends with any command candidate
+  // leaks into searchable programLines during expect waiting!
+  const candidates = (shell.lastInput || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map(c => c.trim())
+    .filter(c => c.length > 0 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(c));
+
+  if (candidates.length === 0) {
+    return separated.programLines;
+  }
+
+  return separated.programLines.filter((line, idx) => {
+    if (idx < candidates.length + 3) {
+      const trimmed = line.trim();
+      for (const candidate of candidates) {
+        if (trimmed === candidate || trimmed.endsWith(candidate)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  });
 }
 
 const shells = new Map<string, ShellSession>();

@@ -10,6 +10,8 @@ export interface SshCredentials {
   privateKey?: string;
   passphrase?: string;
   timeout?: number;
+  proxyEnabled?: boolean;
+  proxyUrl?: string;
 }
 
 // --- Session ---
@@ -24,6 +26,8 @@ export interface Session {
   username: string;
   createdAt: number;
   lastUsedAt: number;
+  proxyEnabled?: boolean;
+  proxyUrl?: string;
 }
 
 // --- Tool argument types ---

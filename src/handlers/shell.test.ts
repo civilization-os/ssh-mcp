@@ -216,6 +216,56 @@ describe("handleShellRead", () => {
 
     await shellModule.handleShellClose({ shellId });
   });
+
+  it("composite write+expect does not complete early on command echo containing expect marker", async () => {
+    const channel = new EventEmitter() as any;
+    channel.stderr = new EventEmitter();
+    channel.stdin = { write: vi.fn((_input: string, _encoding: string, callback: (error?: Error) => void) => callback()) };
+    channel.setWindow = vi.fn();
+    channel.close = vi.fn();
+    const client = {
+      shell: vi.fn((_options: unknown, callback: (error: undefined, channel: any) => void) => {
+        callback(undefined, channel);
+        setTimeout(() => channel.emit("data", Buffer.from("user@custom-server:~$ ")), 10);
+      }),
+    };
+    getSessionMock.mockReturnValue({ id: "sess_composite_echo", type: "ssh", client });
+
+    const shellModule = await import("./shell.js");
+    const created = await shellModule.handleShellCreate({ sessionId: "sess_composite_echo", cols: 80, rows: 8 }) as any;
+    const shellId = created.content[0].text.match(/Interactive shell created: (\S+)/)?.[1];
+    expect(shellId).toBeTruthy();
+
+    const cmd = "sleep 2; echo COMPOSITE_OK";
+    const writePromise = shellModule.handleShellWrite({
+      shellId,
+      input: cmd,
+      expect: "COMPOSITE_OK",
+      maxWaitMs: 800,
+    });
+
+    // 1. Terminal echoes the command back (with trailing space and prompt)
+    setTimeout(() => {
+      channel.emit("data", Buffer.from(`user@custom-server:~$ ${cmd} \r\n`));
+    }, 20);
+
+    let earlyResolved = false;
+    void writePromise.then(() => { earlyResolved = true; });
+
+    // 2. Wait 60ms - must NOT resolve yet!
+    await new Promise(resolve => setTimeout(resolve, 60));
+    expect(earlyResolved).toBe(false);
+
+    // 3. Emit the real program execution output
+    channel.emit("data", Buffer.from("COMPOSITE_OK\r\nuser@custom-server:~$ "));
+
+    const result = await writePromise as any;
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.programOutput).toContain("COMPOSITE_OK");
+    expect(payload.programOutput).not.toContain("sleep 2; echo COMPOSITE_OK");
+
+    await shellModule.handleShellClose({ shellId });
+  });
 });
 
 describe("handleShellResize", () => {

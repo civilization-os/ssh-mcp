@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import net from "net";
 import { globalEvents } from "./eventBus.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,6 +33,8 @@ interface StoredCredentials {
   password?: string;
   privateKey?: string;
   passphrase?: string;
+  proxyEnabled?: boolean;
+  proxyUrl?: string;
 }
 
 /** Non-sensitive session metadata persisted across restarts (credentials now encrypted and saved). */
@@ -47,6 +50,8 @@ interface SessionMeta {
   passwordEncrypted?: string;
   privateKeyEncrypted?: string;
   passphraseEncrypted?: string;
+  proxyEnabled?: boolean;
+  proxyUrl?: string;
 }
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -136,6 +141,8 @@ function saveSessionMeta() {
       username: session.username,
       createdAt: session.createdAt,
       lastUsedAt: session.lastUsedAt,
+      proxyEnabled: session.proxyEnabled,
+      proxyUrl: session.proxyUrl,
     };
 
     if (stored) {
@@ -190,6 +197,8 @@ export function loadSessionMeta(): void {
         username: m.username,
         createdAt: m.createdAt,
         lastUsedAt: m.lastUsedAt,
+        proxyEnabled: m.proxyEnabled,
+        proxyUrl: m.proxyUrl,
       };
 
       const creds: StoredCredentials = {
@@ -199,6 +208,8 @@ export function loadSessionMeta(): void {
         host: m.host,
         port: m.port,
         username: m.username,
+        proxyEnabled: m.proxyEnabled,
+        proxyUrl: m.proxyUrl,
       };
 
       if (m.passwordEncrypted) {
@@ -318,12 +329,333 @@ export function buildConnectConfig(creds: Partial<SshCredentials>): ConnectConfi
   return config;
 }
 
-export function sshConnect(creds: Partial<SshCredentials>, timeoutMs: number): Promise<Client> {
+export function getEffectiveProxyUrl(customProxyUrl?: string): string | undefined {
+  const custom = normalizeOptionalString(customProxyUrl);
+  if (custom) return custom;
+
+  // Try reading from Desktop application settings (settings.json in DATA_DIRECTORY)
+  try {
+    const desktopSettingsPath = path.join(DATA_DIRECTORY, "settings.json");
+    if (fs.existsSync(desktopSettingsPath)) {
+      const content = fs.readFileSync(desktopSettingsPath, "utf-8");
+      const parsed = JSON.parse(content);
+      if (parsed?.proxy?.mode === "fixed" && parsed.proxy.url) {
+        return String(parsed.proxy.url).trim();
+      }
+    }
+  } catch {}
+
+  // Fallback to standard environment variables
+  const envProxy = process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+  if (envProxy && envProxy.trim()) {
+    return envProxy.trim();
+  }
+
+  return undefined;
+}
+
+export async function createProxySocket(
+  proxyUrlString: string,
+  targetHost: string,
+  targetPort: number,
+  timeoutMs: number = 10000,
+): Promise<net.Socket> {
+  let proxyUrl: URL;
+  try {
+    proxyUrl = new URL(proxyUrlString);
+  } catch (err: any) {
+    throw new Error(`Invalid proxy URL "${proxyUrlString}": ${err.message}`);
+  }
+
+  const protocol = proxyUrl.protocol.replace(/:$/, "").toLowerCase();
+  const proxyHost = proxyUrl.hostname;
+  const proxyPort = Number(proxyUrl.port) || (protocol.startsWith("socks") ? 1080 : 80);
+
+  if (protocol === "http" || protocol === "https") {
+    return await createHttpConnectSocket(proxyUrl, proxyHost, proxyPort, targetHost, targetPort, timeoutMs);
+  } else if (protocol === "socks" || protocol === "socks5" || protocol === "socks5h") {
+    return await createSocks5Socket(proxyUrl, proxyHost, proxyPort, targetHost, targetPort, timeoutMs);
+  } else {
+    throw new Error(`Unsupported proxy protocol "${protocol}". Supported protocols: http, https, socks5`);
+  }
+}
+
+function createHttpConnectSocket(
+  proxyUrl: URL,
+  proxyHost: string,
+  proxyPort: number,
+  targetHost: string,
+  targetPort: number,
+  timeoutMs: number,
+): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
-    const config = buildConnectConfig(creds);
+    const socket = net.connect({ host: proxyHost, port: proxyPort });
+    let resolved = false;
+
+    const cleanup = () => {
+      socket.removeListener("error", onError);
+      socket.removeListener("timeout", onTimeout);
+      socket.removeListener("data", onData);
+    };
+
+    const onError = (err: Error) => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        socket.destroy();
+        reject(new Error(`HTTP proxy connection to ${proxyHost}:${proxyPort} failed: ${err.message}`));
+      }
+    };
+
+    const onTimeout = () => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        socket.destroy();
+        reject(new Error(`HTTP proxy connection timed out after ${timeoutMs}ms`));
+      }
+    };
+
+    socket.setTimeout(timeoutMs, onTimeout);
+    socket.once("error", onError);
+
+    let buffer = "";
+
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString("binary");
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd !== -1) {
+        cleanup();
+        socket.setTimeout(0); // clear timeout for ongoing SSH session
+
+        const headerText = buffer.slice(0, headerEnd);
+        const statusLine = headerText.split("\r\n")[0];
+        const match = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/i);
+        const statusCode = match ? parseInt(match[1], 10) : 0;
+
+        if (statusCode >= 200 && statusCode < 300) {
+          resolved = true;
+          const remainderBinary = buffer.slice(headerEnd + 4);
+          if (remainderBinary.length > 0) {
+            socket.unshift(Buffer.from(remainderBinary, "binary"));
+          }
+          resolve(socket);
+        } else {
+          resolved = true;
+          socket.destroy();
+          reject(new Error(`HTTP proxy rejected CONNECT request with status ${statusCode}: ${statusLine}`));
+        }
+      }
+    };
+
+    socket.on("connect", () => {
+      let connectReq = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
+      if (proxyUrl.username || proxyUrl.password) {
+        const auth = Buffer.from(
+          `${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`
+        ).toString("base64");
+        connectReq += `Proxy-Authorization: Basic ${auth}\r\n`;
+      }
+      connectReq += "Proxy-Connection: Keep-Alive\r\n\r\n";
+      socket.on("data", onData);
+      socket.write(connectReq);
+    });
+  });
+}
+
+function createSocks5Socket(
+  proxyUrl: URL,
+  proxyHost: string,
+  proxyPort: number,
+  targetHost: string,
+  targetPort: number,
+  timeoutMs: number,
+): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host: proxyHost, port: proxyPort });
+    let resolved = false;
+
+    const cleanup = () => {
+      socket.removeListener("error", onError);
+      socket.removeListener("timeout", onTimeout);
+      socket.removeListener("data", onData);
+    };
+
+    const onError = (err: Error) => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        socket.destroy();
+        reject(new Error(`SOCKS5 proxy connection to ${proxyHost}:${proxyPort} failed: ${err.message}`));
+      }
+    };
+
+    const onTimeout = () => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        socket.destroy();
+        reject(new Error(`SOCKS5 proxy connection timed out after ${timeoutMs}ms`));
+      }
+    };
+
+    socket.setTimeout(timeoutMs, onTimeout);
+    socket.once("error", onError);
+
+    const hasAuth = Boolean(proxyUrl.username || proxyUrl.password);
+    let state: "HANDSHAKE" | "AUTH" | "CONNECT" = "HANDSHAKE";
+    let buffer = Buffer.alloc(0);
+
+    const onData = (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+
+      if (state === "HANDSHAKE") {
+        if (buffer.length < 2) return;
+        const ver = buffer[0];
+        const method = buffer[1];
+        buffer = buffer.slice(2);
+
+        if (ver !== 0x05) {
+          resolved = true;
+          cleanup();
+          socket.destroy();
+          reject(new Error(`Invalid SOCKS version from server: ${ver}`));
+          return;
+        }
+
+        if (method === 0x00) {
+          sendConnectRequest();
+        } else if (method === 0x02 && hasAuth) {
+          state = "AUTH";
+          const uBytes = Buffer.from(decodeURIComponent(proxyUrl.username || ""));
+          const pBytes = Buffer.from(decodeURIComponent(proxyUrl.password || ""));
+          const authPacket = Buffer.concat([
+            Buffer.from([0x01, uBytes.length]),
+            uBytes,
+            Buffer.from([pBytes.length]),
+            pBytes,
+          ]);
+          socket.write(authPacket);
+        } else {
+          resolved = true;
+          cleanup();
+          socket.destroy();
+          reject(new Error(`SOCKS5 server requested unsupported auth method: ${method}`));
+          return;
+        }
+      } else if (state === "AUTH") {
+        if (buffer.length < 2) return;
+        const status = buffer[1];
+        buffer = buffer.slice(2);
+
+        if (status !== 0x00) {
+          resolved = true;
+          cleanup();
+          socket.destroy();
+          reject(new Error(`SOCKS5 username/password authentication failed (status ${status})`));
+          return;
+        }
+
+        sendConnectRequest();
+      } else if (state === "CONNECT") {
+        if (buffer.length < 4) return;
+        const rep = buffer[1];
+        const atyp = buffer[3];
+
+        if (rep !== 0x00) {
+          resolved = true;
+          cleanup();
+          socket.destroy();
+          const errCodes: Record<number, string> = {
+            1: "General SOCKS server failure",
+            2: "Connection not allowed by ruleset",
+            3: "Network unreachable",
+            4: "Host unreachable",
+            5: "Connection refused",
+            6: "TTL expired",
+            7: "Command not supported",
+            8: "Address type not supported",
+          };
+          reject(new Error(`SOCKS5 connect failed: ${errCodes[rep] || `Error code ${rep}`}`));
+          return;
+        }
+
+        let addrLen = 0;
+        if (atyp === 0x01) { // IPv4
+          addrLen = 4;
+        } else if (atyp === 0x04) { // IPv6
+          addrLen = 16;
+        } else if (atyp === 0x03) { // Domain name
+          if (buffer.length < 5) return;
+          addrLen = 1 + buffer[4];
+        }
+
+        const totalResponseLen = 4 + addrLen + 2;
+        if (buffer.length < totalResponseLen) return;
+
+        const remainder = buffer.slice(totalResponseLen);
+        cleanup();
+        socket.setTimeout(0);
+        resolved = true;
+
+        if (remainder.length > 0) {
+          socket.unshift(remainder);
+        }
+        resolve(socket);
+      }
+    };
+
+    function sendConnectRequest() {
+      state = "CONNECT";
+      let destBuf: Buffer;
+      if (net.isIPv4(targetHost)) {
+        const parts = targetHost.split(".").map(Number);
+        destBuf = Buffer.from([0x01, ...parts]);
+      } else {
+        const dBytes = Buffer.from(targetHost);
+        destBuf = Buffer.concat([Buffer.from([0x03, dBytes.length]), dBytes]);
+      }
+
+      const portBuf = Buffer.alloc(2);
+      portBuf.writeUInt16BE(targetPort, 0);
+
+      const req = Buffer.concat([
+        Buffer.from([0x05, 0x01, 0x00]),
+        destBuf,
+        portBuf,
+      ]);
+      socket.write(req);
+    }
+
+    socket.on("connect", () => {
+      socket.on("data", onData);
+      if (hasAuth) {
+        socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02]));
+      } else {
+        socket.write(Buffer.from([0x05, 0x01, 0x00]));
+      }
+    });
+  });
+}
+
+export async function sshConnect(creds: Partial<SshCredentials>, timeoutMs: number): Promise<Client> {
+  const config = buildConnectConfig(creds);
+  let proxySocket: net.Socket | undefined;
+
+  if (creds.proxyEnabled) {
+    const proxyUrl = getEffectiveProxyUrl(creds.proxyUrl);
+    if (!proxyUrl) {
+      throw new Error(`Proxy is enabled for this session, but no proxy URL is configured (neither in session nor in application settings).`);
+    }
+    proxySocket = await createProxySocket(proxyUrl, creds.host ?? "localhost", creds.port ?? 22, timeoutMs);
+    config.sock = proxySocket;
+  }
+
+  return new Promise((resolve, reject) => {
     const client = new Client();
     const timer = setTimeout(() => {
       client.end();
+      proxySocket?.destroy();
       reject(new Error(`SSH connection timeout after ${timeoutMs}ms`));
     }, timeoutMs);
 
@@ -333,7 +665,12 @@ export function sshConnect(creds: Partial<SshCredentials>, timeoutMs: number): P
     });
     client.on("error", (err) => {
       clearTimeout(timer);
+      proxySocket?.destroy();
       reject(err);
+    });
+    client.on("close", () => {
+      clearTimeout(timer);
+      proxySocket?.destroy();
     });
     client.connect(config);
   });
@@ -409,7 +746,11 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
       password: creds.password,
       privateKey: creds.privateKey ? String(creds.privateKey) : undefined,
       passphrase: creds.passphrase,
+      proxyEnabled: creds.proxyEnabled,
+      proxyUrl: normalizeOptionalString(creds.proxyUrl),
     };
+    existingSession.proxyEnabled = creds.proxyEnabled;
+    existingSession.proxyUrl = normalizeOptionalString(creds.proxyUrl);
     (existingSession as any)._creds = storedCred;
 
     registerClientListeners(existingSession.id, client);
@@ -429,6 +770,8 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
     username: targetUsername,
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
+    proxyEnabled: creds.proxyEnabled,
+    proxyUrl: normalizeOptionalString(creds.proxyUrl),
   };
 
   const storedCred: StoredCredentials = {
@@ -441,6 +784,8 @@ export async function createSession(creds: Partial<SshCredentials>, label?: stri
     password: creds.password,
     privateKey: creds.privateKey ? String(creds.privateKey) : undefined,
     passphrase: creds.passphrase,
+    proxyEnabled: creds.proxyEnabled,
+    proxyUrl: normalizeOptionalString(creds.proxyUrl),
   };
   (session as any)._creds = storedCred;
 
@@ -469,6 +814,8 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
     port: creds.port ?? stored.port,
     username: normalizeOptionalString(creds.username) ?? stored.username,
     passphrase: creds.passphrase !== undefined ? normalizeOptionalString(creds.passphrase) : stored.passphrase,
+    proxyEnabled: creds.proxyEnabled !== undefined ? creds.proxyEnabled : stored.proxyEnabled,
+    proxyUrl: creds.proxyUrl !== undefined ? normalizeOptionalString(creds.proxyUrl) : stored.proxyUrl,
   };
 
   if (creds.password !== undefined) {
@@ -492,6 +839,8 @@ export async function updateSession(sessionId: string, creds: Partial<SshCredent
   existing.host = nextCreds.host;
   existing.port = nextCreds.port;
   existing.username = nextCreds.username;
+  existing.proxyEnabled = nextCreds.proxyEnabled;
+  existing.proxyUrl = nextCreds.proxyUrl;
   existing.lastUsedAt = Date.now();
   (existing as any)._creds = nextCreds;
 
@@ -515,6 +864,8 @@ export async function reconnectSessionById(sessionId: string): Promise<Session> 
     password: stored?.password,
     privateKey: stored?.privateKey,
     passphrase: stored?.passphrase,
+    proxyEnabled: existing.proxyEnabled,
+    proxyUrl: existing.proxyUrl,
   };
   
   return await createSession(creds, existing.label);
@@ -596,6 +947,8 @@ export function listSessions(): Omit<Session, "client">[] {
     hasPrivateKey?: boolean;
     idleTimeoutMs: number;
     connected: boolean;
+    proxyEnabled?: boolean;
+    proxyUrl?: string;
   }> = [];
   for (const session of sessions.values()) {
     const stored = getStoredCredentials(session);
@@ -613,6 +966,8 @@ export function listSessions(): Omit<Session, "client">[] {
       hasPassword: Boolean(stored?.password),
       hasPrivateKey: Boolean(stored?.privateKey),
       connected: Boolean(session.client),
+      proxyEnabled: session.proxyEnabled,
+      proxyUrl: session.proxyUrl,
     });
   }
   return result;
