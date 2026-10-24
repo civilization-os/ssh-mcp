@@ -94,8 +94,13 @@ describe("handleShellRead", () => {
     const payload = JSON.parse(read.content[0].text);
     expect(payload.content).toContain("Started");
     expect(payload.content).not.toMatch(/[\r\x1b]/);
-    expect(payload.screen).toContain("root@test:~#");
-    expect(payload.cursor).toEqual({ row: 1, column: 13 });
+    // Verifies that screen is omitted by default to save tokens and prevent host pruning
+    expect(payload.screen).toBeUndefined();
+
+    // Verifies that screen is included when requested via includeScreen
+    const readWithScreen = await shellModule.handleShellRead({ shellId, includeScreen: true }) as any;
+    const payloadWithScreen = JSON.parse(readWithScreen.content[0].text);
+    expect(payloadWithScreen.screen).toContain("root@test:~#");
     expect(appMessages.join("" )).toContain("\x1b[2K");
 
     expect(shellModule.resizeShell(shellId, 80, 24)).toBe(true);
@@ -106,6 +111,66 @@ describe("handleShellRead", () => {
     await shellModule.handleShellClose({ shellId });
   });
 
+
+  it("supports inputBase64 without escape distortion", async () => {
+    const channel = new EventEmitter() as any;
+    channel.stderr = new EventEmitter();
+    let writtenData = "";
+    channel.stdin = { write: vi.fn((input: string, _encoding: string, callback: (error?: Error) => void) => {
+      writtenData = input;
+      callback();
+    }) };
+    channel.setWindow = vi.fn();
+    channel.close = vi.fn();
+    const client = {
+      shell: vi.fn((_options: unknown, callback: (error: undefined, channel: any) => void) => callback(undefined, channel)),
+    };
+    getSessionMock.mockReturnValue({ id: "sess_b64", type: "ssh", client });
+
+    const shellModule = await import("./shell.js");
+    await shellModule.handleShellCreate({ sessionId: "sess_b64" });
+
+    // Awk script containing literal backslash-n: awk '{printf "%s\n", $1}'
+    const rawCmd = "awk '{printf \"%s\\n\", $1}' file.txt";
+    const b64 = Buffer.from(rawCmd).toString("base64");
+    
+    // Omit shellId to test auto fallback to recent active shell
+    const res = await shellModule.handleShellWrite({ inputBase64: b64 }) as any;
+    expect(res.isError).toBeFalsy();
+    // Auto-appends newline at the very end, but preserves rawCmd's internal \n without destroying it!
+    expect(writtenData).toBe(rawCmd + "\n");
+  });
+
+  it("supports composite write+read (waiting for expect directly in write)", async () => {
+    const channel = new EventEmitter() as any;
+    channel.stderr = new EventEmitter();
+    channel.stdin = { write: vi.fn((_input: string, _encoding: string, callback: (error?: Error) => void) => callback()) };
+    channel.setWindow = vi.fn();
+    channel.close = vi.fn();
+    const client = {
+      shell: vi.fn((_options: unknown, callback: (error: undefined, channel: any) => void) => callback(undefined, channel)),
+    };
+    getSessionMock.mockReturnValue({ id: "sess_composite", type: "ssh", client });
+
+    const shellModule = await import("./shell.js");
+    const created = await shellModule.handleShellCreate({ sessionId: "sess_composite" }) as any;
+    const shellId = created.content[0].text.match(/Interactive shell created: (\S+)/)?.[1];
+
+    const writePromise = shellModule.handleShellWrite({
+      shellId,
+      input: "echo DONE",
+      expect: "DONE_OUTPUT",
+      maxWaitMs: 500,
+    });
+
+    setTimeout(() => {
+      channel.emit("data", Buffer.from("DONE_OUTPUT\r\n"));
+    }, 20);
+
+    const result = await writePromise as any;
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.programOutput).toContain("DONE_OUTPUT");
+  });
   it("does not satisfy expect from the echoed command itself", async () => {
     const channel = new EventEmitter() as any;
     channel.stderr = new EventEmitter();
@@ -131,6 +196,7 @@ describe("handleShellRead", () => {
       shellId,
       expect: "EXPECT_REAL_OUTPUT",
       maxWaitMs: 500,
+      includeEcho: true,
     }) as Promise<any>;
 
     channel.emit("data", Buffer.from(`\r\x1b[2K(base) [root@host current]# ${command}\r\n`));

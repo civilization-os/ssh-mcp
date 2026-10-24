@@ -126,14 +126,14 @@ command = "C:\\Users\\YOUR_NAME\\AppData\\Local\\Programs\\SSH-MCP Desktop\\ssh-
 
 ## MCP 能力
 
-MCP 访问开启时，当前 Bridge 共发布 23 个工具。
+MCP 访问开启时，当前 Bridge 共发布 24 个工具。
 
 | 分组 | 工具 | 用途 |
 |---|---|---|
 | 会话 | `ssh_connect`、`ssh_disconnect`、`ssh_sessions`、`ssh_web_start` | 创建、恢复、查看或断开连接，也可打开本地工作台 |
 | 共享 Shell | `ssh_shell`、`ssh_shell_write`、`ssh_shell_read`、`ssh_shell_resize`、`ssh_shell_close`、`ssh_shell_list` | 操作长时间运行的交互式 PTY |
 | 文件 | `ssh_file_read`、`ssh_file_write`、`ssh_file_upload`、`ssh_file_download`、`ssh_file_list`、`ssh_file_delete`、`ssh_file_rename`、`ssh_file_mkdir`、`ssh_file_chmod`、`ssh_file_stat` | 通过 SFTP 管理远程文件并双向流式传输二进制文件 |
-| 监控 | `ssh_sysinfo`、`ssh_processes`、`ssh_disk_usage` | 查看远程系统、进程和存储状态 |
+| 监控与诊断 | `ssh_sysinfo`、`ssh_processes`、`ssh_disk_usage`、`ssh_proc_info` | 查看远程系统、存储状态及进程深度诊断（含 cmdline、exe、cwd 与 systemd unit，防误杀） |
 
 MCP 资源提供当前会话、Shell 状态和渲染后的终端输出：
 

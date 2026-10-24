@@ -25,6 +25,7 @@ import {
   handleSysinfo,
   handleProcesses,
   handleDiskUsage,
+  handleProcInfo,
 } from "./system.js";
 import {
   handleShellCreate,
@@ -52,6 +53,7 @@ import {
   validateSshSysinfoArgs,
   validateSshProcessesArgs,
   validateSshDiskUsageArgs,
+  validateSshProcInfoArgs,
   validateSshShellArgs,
   validateSshShellWriteArgs,
   validateSshShellReadArgs,
@@ -313,6 +315,13 @@ export async function handleMcpToolCall(name: string, args: any, globalHttpPort:
         return await handleDiskUsage(args);
       }
 
+      case "ssh_proc_info": {
+        if (!validateSshProcInfoArgs(args)) {
+          throw new McpError(ErrorCode.InvalidParams, "pid is required and must be a number");
+        }
+        return await handleProcInfo(args);
+      }
+
       // Interactive Shell
       case "ssh_shell": {
         if (!validateSshShellArgs(args)) {
@@ -323,28 +332,28 @@ export async function handleMcpToolCall(name: string, args: any, globalHttpPort:
 
       case "ssh_shell_write": {
         if (!validateSshShellWriteArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "shellId and input are required");
+          throw new McpError(ErrorCode.InvalidParams, "input or inputBase64 is required");
         }
         return await handleShellWrite(args);
       }
 
       case "ssh_shell_read": {
         if (!validateSshShellReadArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "shellId is required");
+          throw new McpError(ErrorCode.InvalidParams, "invalid arguments");
         }
         return await handleShellRead(args);
       }
 
       case "ssh_shell_resize": {
         if (!validateSshShellResizeArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "shellId is required");
+          throw new McpError(ErrorCode.InvalidParams, "invalid arguments");
         }
         return await handleShellResize(args);
       }
 
       case "ssh_shell_close": {
         if (!validateSshShellCloseArgs(args)) {
-          throw new McpError(ErrorCode.InvalidParams, "shellId is required");
+          throw new McpError(ErrorCode.InvalidParams, "invalid arguments");
         }
         return await handleShellClose(args);
       }

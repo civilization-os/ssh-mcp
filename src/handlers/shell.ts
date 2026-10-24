@@ -19,6 +19,7 @@ interface ShellSession {
   buffer: string;
   closed: boolean;
   createdAt: number;
+  lastUsedAt?: number;
   wsClients?: Set<any>;
   keepAlive?: boolean;
   heartbeatTimer?: ReturnType<typeof setInterval>;
@@ -274,6 +275,7 @@ export async function handleShellCreate(args: SshShellArgs) {
         buffer: "",
         closed: false,
         createdAt: Date.now(),
+        lastUsedAt: Date.now(),
         keepAlive: !!args.keepAlive,
         terminalView: new TerminalView(cols, rows),
         semanticBaseline: [],
@@ -366,77 +368,46 @@ export async function handleShellCreate(args: SshShellArgs) {
   });
 }
 
-export async function handleShellWrite(args: SshShellWriteArgs) {
-  const shell = shells.get(args.shellId);
-  if (!shell) {
-    return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' not found` }], isError: true };
+export function resolveShell(shellId?: string): { shell?: ShellSession; error?: ToolResult } {
+  if (shellId) {
+    const shell = shells.get(shellId);
+    if (!shell) {
+      return {
+        error: { content: [{ type: "text" as const, text: `Error: Shell '${shellId}' not found` }], isError: true },
+      };
+    }
+    return { shell };
   }
 
-  try {
-    const { touchSession } = await import("../session.js");
-    touchSession(shell.sessionId);
-  } catch {}
-
-  if (shell.closed) {
-    return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' is closed` }], isError: true };
-  }
-
-  await shell.parseQueue;
-  const beforeWrite = shell.terminalView.snapshot();
-  shell.semanticBaseline = beforeWrite.historyLines;
-
-  let input = args.input || "";
-  
-  if (!args.raw) {
-    // Adapt for agents that send literal \n or forget it
-    // 1. Unescape literal \n, \r, \t
-    input = input
-      .replace(/\\n/g, '\n')
-      .replace(/\\r/g, '\r')
-      .replace(/\\t/g, '\t');
-    
-    // 2. Auto-append newline if missing and not a control sequence
-    if (input.length > 0 && 
-        !input.endsWith('\n') && 
-        !input.endsWith('\r') &&
-        !input.endsWith('\x03') && // Ctrl+C
-        !input.endsWith('\x04')    // Ctrl+D
-       ) {
-      input += '\n';
+  // Fallback to the most recently created or used active (non-closed) shell
+  let latest: ShellSession | undefined;
+  for (const s of shells.values()) {
+    if (s.closed) continue;
+    if (!latest || (s.lastUsedAt ?? s.createdAt) > (latest.lastUsedAt ?? latest.createdAt)) {
+      latest = s;
     }
   }
 
-  shell.lastInput = input;
-  shell.lastInputEchoPrefix = beforeWrite.historyLines.at(-1) ?? "";
-
-  return new Promise<ToolResult>((resolve) => {
-    shell.channel.stdin.write(input, "utf-8", (err: Error | null | undefined) => {
-      if (err) {
-        resolve({ content: [{ type: "text" as const, text: `Error writing to shell: ${err.message}` }], isError: true });
-        return;
-      }
-      resolve({
-        content: [{
-          type: "text" as const,
-          text: `Written ${input.length} bytes to shell ${args.shellId}`,
-        }],
-      });
-    });
-  });
-}
-
-export async function handleShellRead(args: SshShellReadArgs) {
-  const shell = shells.get(args.shellId);
-  if (!shell) {
-    return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' not found` }], isError: true };
+  if (!latest) {
+    return {
+      error: {
+        content: [{ type: "text" as const, text: "Error: No active interactive shell found. Please create one with ssh_shell first." }],
+        isError: true,
+      },
+    };
   }
 
+  return { shell: latest };
+}
+
+async function executeShellRead(shell: ShellSession, args: SshShellReadArgs): Promise<ToolResult> {
   try {
     const { touchSession } = await import("../session.js");
     touchSession(shell.sessionId);
   } catch {}
 
-  // Optional: wait for output to settle or for a specific pattern
+  shell.lastUsedAt = Date.now();
+
   const waitMs = args.waitMs ?? 0;
   if ((waitMs > 0 || args.expect) && !shell.closed && !args.peek) {
     await waitForQuiet(shell, waitMs, args.maxWaitMs ?? (args.expect ? 30_000 : undefined), args.expect);
@@ -449,6 +420,7 @@ export async function handleShellRead(args: SshShellReadArgs) {
     : semanticDelta(shell.semanticBaseline, snapshot.historyLines);
   let inputEcho: string[] = [];
   let programLines = outputLines;
+
   if (!args.peek) {
     const separated = separateInputEcho(outputLines, shell.lastInput, shell.lastInputEchoPrefix);
     inputEcho = separated.inputEcho;
@@ -456,7 +428,6 @@ export async function handleShellRead(args: SshShellReadArgs) {
   }
   const maxLen = Math.max(1, Math.min(args.maxLength ?? 50_000, 1_000_000));
 
-  // ANSI and control characters have already been interpreted by TerminalView.
   if (args.tailLines && args.tailLines > 0) {
     outputLines = outputLines.slice(-args.tailLines);
     programLines = programLines.slice(-args.tailLines);
@@ -478,54 +449,171 @@ export async function handleShellRead(args: SshShellReadArgs) {
   }
 
   const screen = snapshot.screenLines.join("\n");
-  const promptShown = /[:\w\s~.-]+[@\w\s~.-]+[#$>]\s*$/.test(screen.slice(-100));
 
-  const result = {
-    shellId: args.shellId,
+  // Improved prompt detection: check the last non-empty line of the terminal screen
+  let promptShown = false;
+  const promptRegex = /(?:[:\w\s~.-]+[@\w\s~.-]+[#$>~%]|(?:\$|#|>|%|➜|❯|⟩))\s*$/;
+  for (let i = snapshot.screenLines.length - 1; i >= 0; i--) {
+    const line = snapshot.screenLines[i].trim();
+    if (line) {
+      promptShown = promptRegex.test(line);
+      break;
+    }
+  }
+
+  const result: Record<string, any> = {
+    shellId: shell.id,
     status: shell.closed ? "CLOSED" : "OPEN",
     renderMode: "terminal-screen",
-    bufferType: snapshot.bufferType,
-    dimensions: { cols: snapshot.cols, rows: snapshot.rows },
-    cursor: snapshot.cursor,
     promptShown,
     bufferSize: shell.buffer.length,
     unreadSize: output.length,
-    truncated,
+    truncated: truncated || programOutputTruncated,
     content: text || "(no visible terminal changes)",
-    inputEcho,
     programOutput: programText,
-    programOutputTruncated,
-    screen,
   };
+
+  // Critical optimization: omit screen and inputEcho by default to save 70%+ tokens
+  // and prevent host-side pruning ("tool result middle pruned").
+  if (args.includeScreen || args.peek || snapshot.bufferType === "alternate") {
+    result.screen = screen;
+  }
+  if (args.includeEcho) {
+    result.inputEcho = inputEcho;
+  }
+  if (args.peek) {
+    result.bufferType = snapshot.bufferType;
+    result.dimensions = { cols: snapshot.cols, rows: snapshot.rows };
+    result.cursor = snapshot.cursor;
+  }
 
   return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
 }
 
-export async function handleShellResize(args: SshShellResizeArgs) {
-  const shell = shells.get(args.shellId);
-  if (!shell) {
-    return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' not found` }], isError: true };
+export async function handleShellWrite(args: SshShellWriteArgs): Promise<ToolResult> {
+  const { shell, error } = resolveShell(args.shellId);
+  if (error || !shell) {
+    return error || { content: [{ type: "text" as const, text: "Error: Shell not found" }], isError: true };
+  }
+
+  try {
+    const { touchSession } = await import("../session.js");
+    touchSession(shell.sessionId);
+  } catch {}
+
+  shell.lastUsedAt = Date.now();
+
+  if (shell.closed) {
+    return { content: [{ type: "text" as const, text: `Error: Shell '${shell.id}' is closed` }], isError: true };
+  }
+
+  await shell.parseQueue;
+  const beforeWrite = shell.terminalView.snapshot();
+  shell.semanticBaseline = beforeWrite.historyLines;
+
+  let input = "";
+  if (typeof args.inputBase64 === "string") {
+    // 100% byte-accurate decoding without multi-layer escape corruption
+    input = Buffer.from(args.inputBase64, "base64").toString("utf-8");
+    if (!args.raw) {
+      // Auto-append newline if missing and not a control sequence
+      if (input.length > 0 &&
+          !input.endsWith("\n") &&
+          !input.endsWith("\r") &&
+          !input.endsWith("\x03") && // Ctrl+C
+          !input.endsWith("\x04")    // Ctrl+D
+         ) {
+        input += "\n";
+      }
+    }
+  } else {
+    input = args.input || "";
+    if (!args.raw) {
+      // Auto-append newline if missing and not a control sequence
+      // Notice: Do NOT blindly replace \n with real newlines globally,
+      // as that destroys scripts containing awk, sed, printf '\n' etc.
+      if (input.length > 0 &&
+          !input.endsWith("\n") &&
+          !input.endsWith("\r") &&
+          !input.endsWith("\x03") && // Ctrl+C
+          !input.endsWith("\x04")    // Ctrl+D
+         ) {
+        input += "\n";
+      }
+    }
+  }
+
+  shell.lastInput = input;
+  shell.lastInputEchoPrefix = beforeWrite.historyLines.at(-1) ?? "";
+
+  const writeResult = await new Promise<ToolResult>((resolve) => {
+    shell.channel.stdin.write(input, "utf-8", (err: Error | null | undefined) => {
+      if (err) {
+        resolve({ content: [{ type: "text" as const, text: `Error writing to shell: ${err.message}` }], isError: true });
+        return;
+      }
+      resolve({
+        content: [{
+          type: "text" as const,
+          text: `Written ${input.length} bytes to shell ${shell.id}`,
+        }],
+      });
+    });
+  });
+
+  if (writeResult.isError) {
+    return writeResult;
+  }
+
+  // Composite workflow: if waitMs or expect is passed, wait and directly return execution output!
+  if (args.waitMs !== undefined || args.expect !== undefined) {
+    return await executeShellRead(shell, {
+      shellId: shell.id,
+      waitMs: args.waitMs,
+      expect: args.expect,
+      maxWaitMs: args.maxWaitMs,
+      tailLines: args.tailLines,
+      includeScreen: args.includeScreen,
+      includeEcho: args.includeEcho,
+    });
+  }
+
+  return writeResult;
+}
+
+export async function handleShellRead(args: SshShellReadArgs): Promise<ToolResult> {
+  const { shell, error } = resolveShell(args.shellId);
+  if (error || !shell) {
+    return error || { content: [{ type: "text" as const, text: "Error: Shell not found" }], isError: true };
+  }
+  return await executeShellRead(shell, args);
+}
+
+export async function handleShellResize(args: SshShellResizeArgs): Promise<ToolResult> {
+  const { shell, error } = resolveShell(args.shellId);
+  if (error || !shell) {
+    return error || { content: [{ type: "text" as const, text: "Error: Shell not found" }], isError: true };
   }
   if (shell.closed) {
-    return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' is closed` }], isError: true };
+    return { content: [{ type: "text" as const, text: `Error: Shell '${shell.id}' is closed` }], isError: true };
   }
 
   const cols = args.cols ?? 120;
   const rows = args.rows ?? 30;
 
-  resizeShell(args.shellId, cols, rows);
+  resizeShell(shell.id, cols, rows);
   return {
     content: [{
       type: "text" as const,
-      text: `Shell ${args.shellId} resized to ${cols}x${rows}`,
+      text: `Shell ${shell.id} resized to ${cols}x${rows}`,
     }],
   };
 }
 
-export async function handleShellClose(args: SshShellCloseArgs) {
-  const shell = shells.get(args.shellId);
-  if (!shell) {
-    return { content: [{ type: "text" as const, text: `Error: Shell '${args.shellId}' not found` }], isError: true };
+export async function handleShellClose(args: SshShellCloseArgs): Promise<ToolResult> {
+  const { shell, error } = resolveShell(args.shellId);
+  if (error || !shell) {
+    return error || { content: [{ type: "text" as const, text: "Error: Shell not found" }], isError: true };
   }
 
   // Notify and close all WebSocket clients
@@ -546,14 +634,14 @@ export async function handleShellClose(args: SshShellCloseArgs) {
     clearInterval(shell.heartbeatTimer);
   }
   disposeTerminalWhenFlushed(shell);
-  shells.delete(args.shellId);
-  shellEvents.emit("close", args.shellId);
+  shells.delete(shell.id);
+  shellEvents.emit("close", shell.id);
   globalEvents.emit("shells_changed");
 
   return {
     content: [{
       type: "text" as const,
-      text: `Shell ${args.shellId} closed.`,
+      text: `Shell ${shell.id} closed.`,
     }],
   };
 }

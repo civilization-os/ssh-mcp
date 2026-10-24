@@ -15,6 +15,7 @@ import {
   validateSshSysinfoArgs,
   validateSshProcessesArgs,
   validateSshDiskUsageArgs,
+  validateSshProcInfoArgs,
   validateSshShellArgs,
   validateSshShellWriteArgs,
   validateSshShellReadArgs,
@@ -232,12 +233,31 @@ describe("validateSshShellWriteArgs", () => {
     expect(validateSshShellWriteArgs({ shellId: "sh_1", input: "\x03", raw: true })).toBe(true);
   });
 
-  it("rejects missing input", () => {
-    expect(validateSshShellWriteArgs({ shellId: "sh_1" })).toBe(false);
+  it("accepts inputBase64", () => {
+    expect(validateSshShellWriteArgs({ shellId: "sh_1", inputBase64: "bHMgLWxhCg==" })).toBe(true);
   });
 
-  it("rejects missing shellId", () => {
-    expect(validateSshShellWriteArgs({ input: "ls" })).toBe(false);
+  it("accepts missing shellId (defaults to active shell)", () => {
+    expect(validateSshShellWriteArgs({ input: "ls" })).toBe(true);
+  });
+
+  it("rejects missing both input and inputBase64", () => {
+    expect(validateSshShellWriteArgs({ shellId: "sh_1" })).toBe(false);
+  });
+});
+
+describe("validateSshProcInfoArgs", () => {
+  it("accepts numeric pid", () => {
+    expect(validateSshProcInfoArgs({ pid: 1234 })).toBe(true);
+  });
+
+  it("accepts string pid", () => {
+    expect(validateSshProcInfoArgs({ pid: "1234" })).toBe(true);
+  });
+
+  it("rejects missing or invalid pid", () => {
+    expect(validateSshProcInfoArgs({})).toBe(false);
+    expect(validateSshProcInfoArgs({ pid: "abc" })).toBe(false);
   });
 });
 

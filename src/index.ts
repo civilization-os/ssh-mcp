@@ -362,8 +362,22 @@ const TOOL_CATALOG = [
       },
     },
     {
+      name: "ssh_proc_info",
+      description: "Inspect detailed process runtime information on remote server by PID (reads cmdline, exe, cwd, and systemd cgroup service unit). HIGHLY RECOMMENDED before killing processes to prevent terminating critical system services or web servers.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session ID from ssh_connect" },
+          ...authFields,
+          pid: { type: "number", description: "Target process PID to inspect" },
+          timeout: { type: "number", description: "Timeout in ms (default: 15000)" },
+        },
+        required: ["pid"],
+      },
+    },
+    {
       name: "ssh_shell",
-      description: "Create an interactive PTY shell session on a remote server. Returns a shellId. RECOMMENDATION: For real-time monitoring and high-frequency output, SUBSCRIBE to the resource 'mcp://ssh/shell/{shellId}/output' instead of polling ssh_shell_read.",
+      description: "Create an interactive PTY shell session on a remote server. Returns a shellId. TIP: You can omit shellId in subsequent write/read calls to automatically use the most recent active shell.",
       inputSchema: {
         type: "object",
         properties: {
@@ -378,34 +392,41 @@ const TOOL_CATALOG = [
     },
     {
       name: "ssh_shell_write",
-      description: "Write input to an interactive shell. Supports text, commands, and control sequences. By default, literal '\\n' is converted to a real newline and a newline is automatically appended if missing. Use 'raw: true' to send input exactly as provided.",
+      description: "Write input to an interactive shell.\n\n【常用速查】\n  {input: \"ls -la\"}                 → 执行命令并自动在末尾换行\n  {inputBase64: \"...\", waitMs: 500} → 免转义脚本输入（无惧awk/引号/$），并直接返回执行输出！\n  {input: \"npm i\", expect: \"EXIT=\"}  → 发送命令并等待完成，一步到位（省去额外一次 read 调用）\n\n特性：\n1. 省略 shellId 时自动使用最近活跃 shell；\n2. inputBase64：输入 Base64 字符串，工具端精确解码，彻底避免 JSON/Bash 多层引号与反斜杠转义破坏；\n3. 复合模式：传入 waitMs 或 expect 时，写完后自动等待并直接返回执行输出，将交互往返减半；\n4. raw: true 禁用末尾自动追加换行（用于交互按键如 Ctrl+C、密码输入等）。",
       inputSchema: {
         type: "object",
         properties: {
-          shellId: { type: "string", description: "Shell ID from ssh_shell" },
-          input: { type: "string", description: "Text to write to the shell stdin." },
-          raw: { type: "boolean", description: "If true, bypass auto-newline and unescaping logic (default: false)" },
+          shellId: { type: "string", description: "Shell ID from ssh_shell (optional: defaults to the most recent active shell)" },
+          input: { type: "string", description: "Text/command to write to shell stdin (auto appends newline if missing unless raw=true)" },
+          inputBase64: { type: "string", description: "Base64 encoded input. Recommended for complex scripts, awk, quotes, and multiline commands to bypass escape issues completely." },
+          raw: { type: "boolean", description: "If true, bypass auto-newline appending (default: false)" },
+          waitMs: { type: "number", description: "Wait for N ms of silence after writing and directly return output (composite write+read mode)" },
+          expect: { type: "string", description: "Wait until this regex pattern appears in output after writing, then return output directly" },
+          maxWaitMs: { type: "number", description: "Maximum time in ms to wait when expect/waitMs is used (default: 30000 with expect)" },
+          tailLines: { type: "number", description: "Only return the last N lines of output when waiting" },
+          includeScreen: { type: "boolean", description: "Include full terminal screen snapshot in the returned output (default: false)" },
+          includeEcho: { type: "boolean", description: "Include echoed input command lines in output (default: false)" },
         },
-        required: ["shellId", "input"],
       },
     },
     {
       name: "ssh_shell_read",
-      description: "Read an interactive shell as a rendered terminal, not as raw control characters. Carriage returns, backspace, tabs, ANSI erase/cursor movement, alternate screens, and wide characters are applied before output is returned. By default content contains all visible changes since the last write, inputEcho identifies echoed MCP input, and programOutput excludes that echo. expect only matches programOutput, so a marker embedded in an echoed command cannot complete the wait early. peek=true returns rendered scrollback. The response also includes the current screen, row/column cursor, dimensions, and truncation state.",
+      description: "Read output from an interactive shell as a rendered terminal.\n\n【常用速查】\n  {shellId}                  → 读增量输出（默认精简返回，极大节省 Token 防止中段截断）\n  {shellId, expect:\"EXIT=\"}  → 等待命令结束或特定标记（替代手动 sleep 轮询）\n  {shellId, waitMs:500}      → 等待输出静默 500ms 后返回\n  {shellId, tailLines:20}    → 仅读最后 20 行，节省上下文\n  {shellId, peek:true}       → 查看整屏历史与快照（不推进增量游标）\n\n特性：\n1. 省略 shellId 时自动使用最近活跃 shell；\n2. 默认返回精简结构（仅包含 output/programOutput、promptShown、unreadSize），默认不返回几十行 screen 与重复的 inputEcho，体积减少 70%+；\n3. 如需查看整屏全量视图，请传 includeScreen: true 或 peek: true。",
       inputSchema: {
         type: "object",
         properties: {
-          shellId: { type: "string", description: "Shell ID from ssh_shell" },
-          maxLength: { type: "number", description: "Max bytes to return (default: 50000, reads from end of the current incremental window or snapshot)" },
-          clear: { type: "boolean", description: "Clear the full buffer and reset the incremental window after reading (default: false)" },
+          shellId: { type: "string", description: "Shell ID from ssh_shell (optional: defaults to the most recent active shell)" },
+          maxLength: { type: "number", description: "Max bytes to return (default: 50000)" },
+          clear: { type: "boolean", description: "Clear the buffer and reset the incremental baseline after reading (default: false)" },
           waitMs: { type: "number", description: "Wait for N ms of silence before returning (e.g. 500 = wait until output stops)" },
-          maxWaitMs: { type: "number", description: "Maximum total time to wait in ms, even if output is still flowing (defaults to 30000 when expect is used)" },
-          peek: { type: "boolean", description: "Return the current full buffer snapshot immediately without advancing the read cursor" },
-          stripAnsi: { type: "boolean", description: "Deprecated compatibility option; terminal control sequences are always interpreted and never returned raw" },
-          expect: { type: "string", description: "Wait until this regex pattern appears in program output, excluding echoed MCP input (replaces waitMs if it matches early)" },
-          tailLines: { type: "number", description: "Only return the last N lines of the current incremental window or snapshot" },
+          maxWaitMs: { type: "number", description: "Maximum total time to wait in ms (defaults to 30000 when expect is used)" },
+          peek: { type: "boolean", description: "Return full rendered buffer snapshot without advancing read cursor" },
+          expect: { type: "string", description: "Wait until this regex appears in program output before returning" },
+          tailLines: { type: "number", description: "Only return the last N lines of the incremental output" },
+          includeScreen: { type: "boolean", description: "Include full terminal screen snapshot (default: false to save tokens)" },
+          includeEcho: { type: "boolean", description: "Include echoed input command lines (default: false)" },
+          stripAnsi: { type: "boolean", description: "Deprecated; control sequences are always interpreted by virtual terminal" },
         },
-        required: ["shellId"],
       },
     },
     {
@@ -414,11 +435,10 @@ const TOOL_CATALOG = [
       inputSchema: {
         type: "object",
         properties: {
-          shellId: { type: "string", description: "Shell ID from ssh_shell" },
+          shellId: { type: "string", description: "Shell ID from ssh_shell (optional: defaults to recent active shell)" },
           cols: { type: "number", description: "Terminal columns (default: 120)" },
           rows: { type: "number", description: "Terminal rows (default: 30)" },
         },
-        required: ["shellId"],
       },
     },
     {
@@ -427,9 +447,8 @@ const TOOL_CATALOG = [
       inputSchema: {
         type: "object",
         properties: {
-          shellId: { type: "string", description: "Shell ID from ssh_shell" },
+          shellId: { type: "string", description: "Shell ID from ssh_shell (optional: defaults to recent active shell)" },
         },
-        required: ["shellId"],
       },
     },
     {

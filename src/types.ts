@@ -182,6 +182,12 @@ export type SshDiskUsageArgs = {
   timeout?: number;
 } & Partial<SshCredentials>;
 
+export type SshProcInfoArgs = {
+  sessionId?: string;
+  pid: number | string;
+  timeout?: number;
+} & Partial<SshCredentials>;
+
 /** Shared MCP tool result type */
 export type ToolResult = {
   content: { type: string; text: string }[];
@@ -199,13 +205,20 @@ export interface SshShellArgs {
 }
 
 export interface SshShellWriteArgs {
-  shellId: string;
-  input: string;
+  shellId?: string;
+  input?: string;
+  inputBase64?: string;
   raw?: boolean;
+  waitMs?: number;
+  maxWaitMs?: number;
+  expect?: string;
+  tailLines?: number;
+  includeScreen?: boolean;
+  includeEcho?: boolean;
 }
 
 export interface SshShellReadArgs {
-  shellId: string;
+  shellId?: string;
   maxLength?: number;
   clear?: boolean;
   waitMs?: number;
@@ -214,16 +227,18 @@ export interface SshShellReadArgs {
   stripAnsi?: boolean;
   expect?: string;
   tailLines?: number;
+  includeScreen?: boolean;
+  includeEcho?: boolean;
 }
 
 export interface SshShellResizeArgs {
-  shellId: string;
+  shellId?: string;
   cols?: number;
   rows?: number;
 }
 
 export interface SshShellCloseArgs {
-  shellId: string;
+  shellId?: string;
 }
 
 // --- Validation helpers ---
@@ -336,20 +351,31 @@ export function validateSshShellArgs(args: unknown): args is SshShellArgs {
   return isRecord(args) && typeof args.sessionId === "string";
 }
 
+export function validateSshProcInfoArgs(args: unknown): args is SshProcInfoArgs {
+  if (!isRecord(args)) return false;
+  return typeof args.pid === "number" || (typeof args.pid === "string" && args.pid.trim().length > 0 && !isNaN(Number(args.pid)));
+}
+
 export function validateSshShellWriteArgs(args: unknown): args is SshShellWriteArgs {
-  return isRecord(args) && typeof args.shellId === "string" && typeof args.input === "string";
+  if (!isRecord(args)) return false;
+  const hasInput = typeof args.input === "string" || typeof args.inputBase64 === "string";
+  const validShellId = args.shellId === undefined || typeof args.shellId === "string";
+  return hasInput && validShellId;
 }
 
 export function validateSshShellReadArgs(args: unknown): args is SshShellReadArgs {
-  return isRecord(args) && typeof args.shellId === "string";
+  if (!isRecord(args)) return false;
+  return args.shellId === undefined || typeof args.shellId === "string";
 }
 
 export function validateSshShellResizeArgs(args: unknown): args is SshShellResizeArgs {
-  return isRecord(args) && typeof args.shellId === "string";
+  if (!isRecord(args)) return false;
+  return args.shellId === undefined || typeof args.shellId === "string";
 }
 
 export function validateSshShellCloseArgs(args: unknown): args is SshShellCloseArgs {
-  return isRecord(args) && typeof args.shellId === "string";
+  if (!isRecord(args)) return false;
+  return args.shellId === undefined || typeof args.shellId === "string";
 }
 
 

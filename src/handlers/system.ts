@@ -4,6 +4,7 @@ import {
   SshSysinfoArgs,
   SshProcessesArgs,
   SshDiskUsageArgs,
+  SshProcInfoArgs,
 } from "../types.js";
 
 // --- Stats (CPU/Mem %) ---
@@ -142,4 +143,117 @@ export async function handleDiskUsage(args: SshDiskUsageArgs) {
   ) as string;
 
   return { content: [{ type: "text" as const, text: result.trim() || "(no output)" }] };
+}
+
+
+// --- Process Inspection (Safe diagnostic for PID, systemd unit, cmdline) ---
+
+export async function handleProcInfo(args: SshProcInfoArgs) {
+  const pid = Number(args.pid);
+  if (isNaN(pid) || pid <= 0) {
+    return { content: [{ type: "text" as const, text: `Error: Invalid PID '${args.pid}'` }], isError: true };
+  }
+
+  const timeout = args.timeout ?? 15000;
+  const cmd = `
+    if [ -d "/proc/${pid}" ]; then
+      echo "===EXISTS==="
+      echo -n "CMDLINE="
+      cat /proc/${pid}/cmdline 2>/dev/null | tr '\\0' ' ' || true
+      echo ""
+      echo -n "EXE="
+      readlink -f /proc/${pid}/exe 2>/dev/null || true
+      echo -n "CWD="
+      readlink -f /proc/${pid}/cwd 2>/dev/null || true
+      echo "===CGROUP==="
+      cat /proc/${pid}/cgroup 2>/dev/null || true
+      echo "===STATUS==="
+      grep -E '^(Name|State|Tgid|PPid|Uid|Gid|Threads|VmRSS|VmSize):' /proc/${pid}/status 2>/dev/null || true
+    else
+      echo "===NOT_IN_PROC==="
+      ps -o pid,ppid,user,stat,%cpu,%mem,command -p ${pid} 2>/dev/null || true
+    fi
+  `;
+
+  try {
+    const raw = await resolveClient(args, (client) =>
+      execSimple(client, cmd, timeout)
+    ) as string;
+
+    if (raw.includes("===NOT_IN_PROC===")) {
+      const psOut = raw.replace("===NOT_IN_PROC===", "").trim();
+      if (!psOut || psOut.split("\n").length <= 1) {
+        return {
+          content: [{ type: "text" as const, text: `Process with PID ${pid} not found (process does not exist or has exited).` }],
+          isError: true,
+        };
+      }
+      return { content: [{ type: "text" as const, text: `PID ${pid} found via ps fallback:\n${psOut}` }] };
+    }
+
+    // Parse Linux /proc output
+    let cmdline = "";
+    let exe = "";
+    let cwd = "";
+    let systemdUnit = "(none / not managed by systemd)";
+    const statusMap: Record<string, string> = {};
+
+    const cmdMatch = raw.match(/CMDLINE=(.*)/);
+    if (cmdMatch) cmdline = cmdMatch[1].trim();
+
+    const exeMatch = raw.match(/EXE=(.*)/);
+    if (exeMatch) exe = exeMatch[1].trim();
+
+    const cwdMatch = raw.match(/CWD=(.*)/);
+    if (cwdMatch) cwd = cwdMatch[1].trim();
+
+    // Extract systemd service/unit from cgroup
+    const cgroupMatch = raw.match(/===CGROUP===([\s\S]*?)===STATUS===/);
+    if (cgroupMatch) {
+      const cgroupText = cgroupMatch[1];
+      const serviceMatch = cgroupText.match(/([a-zA-Z0-9_.@-]+\.service)/);
+      if (serviceMatch) {
+        systemdUnit = serviceMatch[1];
+      } else {
+        const sliceMatch = cgroupText.match(/([a-zA-Z0-9_.@-]+\.slice)/);
+        if (sliceMatch) {
+          systemdUnit = sliceMatch[1];
+        }
+      }
+    }
+
+    const statusSectionMatch = raw.match(/===STATUS===([\s\S]*)$/);
+    if (statusSectionMatch) {
+      const lines = statusSectionMatch[1].split("\n");
+      for (const line of lines) {
+        const parts = line.split(":");
+        if (parts.length >= 2) {
+          statusMap[parts[0].trim()] = parts.slice(1).join(":").trim();
+        }
+      }
+    }
+
+    const lines = [
+      `PID:          ${pid}`,
+      `Name:         ${statusMap["Name"] || "(unknown)"}`,
+      `Systemd Unit: ${systemdUnit}`,
+      `State:        ${statusMap["State"] || "(unknown)"}`,
+      `PPID:         ${statusMap["PPid"] || "(unknown)"}`,
+      `Threads:      ${statusMap["Threads"] || "1"}`,
+      `Memory (RSS): ${statusMap["VmRSS"] || "N/A"}`,
+      `Virtual Mem:  ${statusMap["VmSize"] || "N/A"}`,
+      `Executable:   ${exe || "(unknown)"}`,
+      `CWD:          ${cwd || "(unknown)"}`,
+      `CommandLine:  ${cmdline || "(empty)"}`,
+    ];
+
+    if (systemdUnit.endsWith(".service")) {
+      lines.push("");
+      lines.push(`⚠️  WARNING: This process belongs to systemd service '${systemdUnit}'. Killing it directly may cause service failure or trigger systemd auto-restart.`);
+    }
+
+    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+  } catch (err: any) {
+    return { content: [{ type: "text" as const, text: `Failed to inspect process ${pid}: ${err.message}` }], isError: true };
+  }
 }

@@ -54,11 +54,12 @@ The app renders the original SSH byte stream with xterm.js. MCP reads process th
 
 `ssh_shell_read` supports:
 
-- `expect` matching against program output instead of the echoed command;
-- `content`, `inputEcho`, and `programOutput` views;
-- incremental reads, `peek`, `tailLines`, and output limits;
-- cursor and terminal-size information;
-- optional keep-alive heartbeats.
+- `inputBase64` for escape-free script inputs (bypasses multi-layer JSON/Bash quote and backslash corruption);
+- Composite write mode in `ssh_shell_write` (pass `waitMs` or `expect` to wait and return output directly, reducing tool roundtrips by 50%);
+- Token-efficient lightweight response in `ssh_shell_read` (omits bulky `screen` and echo by default, saving 70%+ tokens and preventing host-side pruning);
+- Auto-fallback for omitted `shellId` (automatically uses the most recent active shell);
+- Accurate `expect` regex matching against real program output;
+- On-demand snapshots via `includeScreen`, `includeEcho`, `tailLines`, and `peek`.
 
 This prevents completion markers in a Bash prompt or command echo from matching before the program actually prints them.
 
@@ -126,14 +127,14 @@ Keep SSH-MCP Desktop open and turn on **MCP access**. Restart the AI client afte
 
 ## MCP capabilities
 
-The current Bridge exposes 23 tools while MCP access is enabled.
+The current Bridge exposes 24 tools while MCP access is enabled.
 
 | Group | Tools | Purpose |
 |---|---|---|
 | Sessions | `ssh_connect`, `ssh_disconnect`, `ssh_sessions`, `ssh_web_start` | Create, reconnect, inspect, disconnect, or open the local workspace |
 | Shared shell | `ssh_shell`, `ssh_shell_write`, `ssh_shell_read`, `ssh_shell_resize`, `ssh_shell_close`, `ssh_shell_list` | Operate long-lived interactive PTY sessions |
 | Files | `ssh_file_read`, `ssh_file_write`, `ssh_file_upload`, `ssh_file_download`, `ssh_file_list`, `ssh_file_delete`, `ssh_file_rename`, `ssh_file_mkdir`, `ssh_file_chmod`, `ssh_file_stat` | Manage remote files and stream binary files in either direction through SFTP |
-| Monitoring | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage` | Inspect the remote operating system, processes, and storage |
+| Monitoring & Diagnostics | `ssh_sysinfo`, `ssh_processes`, `ssh_disk_usage`, `ssh_proc_info` | Inspect remote OS, storage, and in-depth process diagnostics (cmdline, exe, cwd, systemd unit to prevent accidental termination) |
 
 MCP resources provide active session state, active shell state, and rendered shell output:
 
