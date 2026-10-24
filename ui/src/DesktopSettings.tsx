@@ -43,6 +43,32 @@ function formatBytes(value: number | null): string {
   return `${(value / 1024 ** 2).toFixed(1)} MB`;
 }
 
+function ReleaseNotesView({ notes }: { notes: string }) {
+  const isHtml = /<\/?[a-z][\s\S]*>/i.test(notes);
+
+  if (isHtml) {
+    const cleanHtml = notes
+      .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
+      .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, "")
+      .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "")
+      .replace(/on\w+="[^"]*"/gi, "")
+      .replace(/on\w+='[^']*'/gi, "");
+
+    return (
+      <div
+        className="desktop-release-notes-content"
+        dangerouslySetInnerHTML={{ __html: cleanHtml }}
+      />
+    );
+  }
+
+  return (
+    <div className="desktop-release-notes-content">
+      <pre>{notes}</pre>
+    </div>
+  );
+}
+
 function phaseLabel(phase: SshMcpUpdatePhase, lang: Language): string {
   const labels: Record<SshMcpUpdatePhase, [string, string]> = {
     idle: ["尚未检查", "Not checked"],
@@ -328,9 +354,9 @@ export function DesktopSettingsControl({ collapsed, lang }: DesktopSettingsContr
                 )}
 
                 {update.releaseNotes && (
-                  <details className="desktop-release-notes">
+                  <details className="desktop-release-notes" open>
                     <summary>{zh ? "版本说明" : "Release notes"}</summary>
-                    <pre>{update.releaseNotes}</pre>
+                    <ReleaseNotesView notes={update.releaseNotes} />
                   </details>
                 )}
 
